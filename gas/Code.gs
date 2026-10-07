@@ -2,6 +2,9 @@
 // スプレッドシートの「拡張機能」→「Apps Script」に、このファイルの中身をそのまま貼る。
 // 貼ったあと「デプロイ」→「新しいデプロイ」→「ウェブアプリ」で公開する(手順は README.md)。
 
+// 下の1行は、このスクリプトが触れる範囲を「このスプレッドシートだけ」に絞る指定。消さない。
+/** @OnlyCurrentDoc */
+
 const SHEET_NAME = 'DL記録';
 const FILE_PATTERN = /^\d{6}-\d{2,3}\.csv$/;
 const NAME_MAX = 30;
