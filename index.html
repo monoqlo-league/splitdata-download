@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>分割CSVのダウンロード | MONOQLO麻雀部</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* 色と書体は、PTランキングのページ(ranking)と同じものを使う */
+:root{
+  --bg:#f3f5f2;--surface:#ffffff;--ink:#17201b;--muted:#5d6b63;--line:#dde3dd;
+  --accent:#1d6a4f;--accent-soft:#e2efe8;--minus:#b23a2e;--minus-soft:#f7e6e3;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;
+  --bg:#101512;--surface:#171e1a;--ink:#e6ece8;--muted:#98a69e;--line:#2a332e;
+  --accent:#6cc39c;--accent-soft:#1d2d25;--minus:#f0877a;--minus-soft:#33201d;}}
+:root[data-theme="dark"]{color-scheme:dark;
+  --bg:#101512;--surface:#171e1a;--ink:#e6ece8;--muted:#98a69e;--line:#2a332e;
+  --accent:#6cc39c;--accent-soft:#1d2d25;--minus:#f0877a;--minus-soft:#33201d;}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",sans-serif;font-size:15px;line-height:1.6;padding-inline:16px;padding-block:32px 48px}
+.wrap{max-width:920px;margin:0 auto;display:grid;gap:20px}
+header{display:grid;gap:6px}
+.eyebrow{font-size:13px;font-weight:700;letter-spacing:.12em;color:var(--accent)}
+h1{font-size:clamp(26px,5vw,36px);font-weight:900;line-height:1.25;margin:0;text-wrap:balance}
+.lead{margin:2px 0 4px;max-width:44em;color:var(--muted)}
+.meta{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:4px 18px}
+.meta b,.mono{font-family:"IBM Plex Mono",monospace;font-weight:500;color:var(--ink)}
+
+.notice{margin:0;padding:10px 14px;border:1px solid var(--line);border-left:4px solid var(--minus);border-radius:8px;background:var(--surface);font-size:14px;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;justify-content:space-between}
+
+.tools{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;font-size:13px;color:var(--muted)}
+.check{display:inline-flex;gap:8px;align-items:center;cursor:pointer;color:var(--ink);font-size:14px}
+.check input{width:16px;height:16px;accent-color:var(--accent);margin:0}
+.sync{display:inline-flex;gap:10px;align-items:center}
+.link{all:unset;cursor:pointer;font-weight:700;color:var(--accent);border-bottom:1px dashed var(--accent)}
+.link:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+.link[disabled]{opacity:.5;cursor:default}
+
+#months{display:grid;gap:12px}
+.month{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.month>summary{list-style:none;cursor:pointer;padding:14px 16px 12px;display:grid;grid-template-columns:auto 1fr auto;gap:8px 14px;align-items:baseline}
+.month>summary::-webkit-details-marker{display:none}
+.month>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:12px}
+.mname{font-size:18px;font-weight:900}
+.mname::before{content:"";display:inline-block;width:7px;height:7px;margin-right:10px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:translateY(-3px) rotate(-45deg);transition:transform .15s}
+.month[open] .mname::before{transform:translateY(-4px) rotate(45deg)}
+.mcount{font-size:13px;color:var(--muted);text-align:right;white-space:nowrap}
+.mcount b{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:15px;color:var(--ink)}
+.month.done .mcount b{color:var(--accent)}
+/* 牌を並べた山のように、1ファイルを1枚で表す。取得済みの枚が塗られる */
+.strip{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:3px}
+.strip i{width:9px;height:13px;border-radius:2px;background:var(--line)}
+.strip i.on{background:var(--accent)}
+
+.rows{border-top:1px solid var(--line)}
+.rowhead,.row{display:grid;grid-template-columns:136px 44px minmax(0,1.15fr) minmax(0,1fr) 272px;gap:4px 14px;align-items:center;padding:8px 16px}
+.rowhead{font-size:12px;font-weight:500;color:var(--muted);letter-spacing:.04em;padding-block:7px}
+.rowhead span:nth-child(2){text-align:right}
+.row{border-top:1px solid var(--line)}
+.row.taken{background:color-mix(in srgb,var(--accent-soft) 45%,transparent)}
+.file{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:14px;white-space:nowrap}
+.games{font-family:"IBM Plex Mono",monospace;font-size:14px;text-align:right}
+.span{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.who{font-size:14px;min-width:0;overflow-wrap:anywhere}
+.who .none{color:var(--muted)}
+.who b{font-weight:700}
+.who .tk{display:inline-block;max-width:100%;margin-right:12px}
+.who .t{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted);margin-left:5px;white-space:nowrap}
+.who .more{font-size:12px;color:var(--muted)}
+.act{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+.name{flex:1 1 0;width:0;min-width:0;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
+.name::placeholder{color:var(--muted)}
+.name:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.dl{all:unset;box-sizing:border-box;cursor:pointer;min-width:8.6em;text-align:center;padding:7px 14px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--surface);font-size:14px;font-weight:700;white-space:nowrap}
+.dl:hover{filter:brightness(1.08)}
+.dl:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.dl[disabled]{opacity:.55;cursor:progress}
+.dl.again{background:var(--surface);color:var(--accent)}
+.dl.warn{background:var(--surface);border-color:var(--minus);color:var(--minus)}
+.msg{grid-column:1/-1;margin:0;font-size:13px;text-align:right;color:var(--muted)}
+.msg:empty{display:none}
+.msg.ok{color:var(--accent);font-weight:700}
+.msg.err{color:var(--minus);font-weight:700}
+.empty{margin:0;padding:18px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+.loading{padding:24px;text-align:center;color:var(--muted)}
+footer{font-size:12px;color:var(--muted);display:grid;gap:4px;max-width:60em}
+footer p{margin:0}
+
+@media (max-width:760px){
+  .rowhead{display:none}
+  .row{grid-template-columns:1fr auto;gap:4px 12px;padding:12px 14px}
+  .file{grid-column:1}.games{grid-column:2}
+  .games::after{content:" 対局";font-family:"Zen Kaku Gothic New",sans-serif;font-size:12px;color:var(--muted)}
+  .span,.who,.act{grid-column:1/-1}
+  .act{margin-top:4px}
+  .msg{text-align:left}
+  .month>summary{padding:12px 14px 10px}
+}
+@media (prefers-reduced-motion:reduce){.mname::before{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">MONOQLO麻雀部</div>
+  <h1>分割CSVのダウンロード</h1>
+  <p class="lead">対局記録を10対局ずつに分けたCSV。名前を入れて「ダウンロード」を押すと、誰がいつ取得したかが記録され、この一覧に出る。</p>
+  <div class="meta" id="meta"><span>読み込み中…</span></div>
+</header>
+
+<p class="notice" id="notice" hidden><span id="notice-text"></span><button class="link" id="notice-retry" type="button" hidden>読み込み直す</button></p>
+
+<div class="tools" id="tools" hidden>
+  <label class="check"><input type="checkbox" id="only-open"> まだ誰も取得していないファイルだけ表示</label>
+  <span class="sync" id="sync" hidden><span id="sync-text"></span><button class="link" id="sync-reload" type="button">更新</button></span>
+</div>
+
+<main id="months"><p class="loading">一覧を読み込み中…</p></main>
+
+<footer>
+  <p>名前は入力したとおりに記録され、このページを開いた人全員に表示される。一度入れた名前は、このブラウザが覚える。</p>
+  <p>取得したCSVは、拡張機能「雀魂 牌譜スタッツ出力」の「対局一覧のCSVを読み込む」で読み込む。</p>
+</footer>
+</div>
+
+<script src="config.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  const CONFIG = window.SPLITDATA_CONFIG || {};
+  const ENDPOINT = typeof CONFIG.endpoint === "string" ? CONFIG.endpoint.trim() : "";
+  const NAME_KEY = "splitdata-name";
+  const NAME_MAX = 30;
+  const REQUEST_TIMEOUT_MS = 20000;
+  const REFRESH_MS = 60000;
+
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  };
+
+  const state = {
+    months: [],          // [{month, files:[{name,path,games,from,to}], el, countEl, emptyEl}]
+    rows: new Map(),     // ファイル名 → {file, month, row, who, input, button, msg, tile}
+    records: new Map(),  // ファイル名 → [{name, at}](古い順)
+    name: "",
+    confirm: null,       // 「それでも取得」の確認待ちのファイル名
+    busy: new Set(),
+    loadedAt: null,
+    opened: false,
+  };
+
+  // ---- 名前 ----
+  // 記録側のスクリプト(gas/Code.gs)と同じ整え方をする。先頭の = + - @ はシートで数式になるので外す。
+  function cleanName(value) {
+    return String(value == null ? "" : value)
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .trim()
+      .replace(/^[=+\-@\s]+/, "")
+      .slice(0, NAME_MAX)
+      .trim();
+  }
+  function loadName() {
+    try { return localStorage.getItem(NAME_KEY) || ""; } catch (_) { return ""; }
+  }
+  function saveName(value) {
+    try { localStorage.setItem(NAME_KEY, value); } catch (_) { /* 覚えられなくても動く */ }
+  }
+
+  // ---- 表示の整形 ----
+  const pad = (n) => String(n).padStart(2, "0");
+  function formatAt(iso) {
+    const d = new Date(iso);
+    if (!iso || isNaN(d.getTime())) return "";
+    return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function formatSpan(from, to) {
+    const part = (text) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(text || "");
+      return m ? { day: `${Number(m[2])}/${Number(m[3])}`, time: `${m[4]}:${m[5]}` } : null;
+    };
+    const a = part(from), b = part(to);
+    if (!a || !b) return "";
+    if (from === to) return `${a.day} ${a.time}`;
+    return a.day === b.day ? `${a.day} ${a.time} 〜 ${b.time}` : `${a.day} ${a.time} 〜 ${b.day} ${b.time}`;
+  }
+  function monthLabel(month) {
+    return `${month.slice(0, 4)}年${Number(month.slice(4))}月`;
+  }
+
+  // ---- 一覧を組み立てる(最初の1回だけ) ----
+  function build(manifest) {
+    const host = $("months");
+    host.textContent = "";
+    for (const m of manifest.months) {
+      const box = el("details", "month");
+      const summary = el("summary");
+      summary.append(el("span", "mname", monthLabel(m.month)), el("span"));
+      const count = el("span", "mcount");
+      const strip = el("span", "strip");
+      strip.setAttribute("aria-hidden", "true");
+      summary.append(count, strip);
+      box.append(summary);
+
+      const rows = el("div", "rows");
+      const head = el("div", "rowhead");
+      for (const label of ["ファイル", "対局", "対局の期間", "取得した人", "名前を入れて取得"]) head.append(el("span", "", label));
+      rows.append(head);
+
+      for (const file of m.files) {
+        const row = el("div", "row");
+        const who = el("div", "who");
+        const act = el("div", "act");
+        const input = el("input", "name");
+        input.type = "text";
+        input.maxLength = NAME_MAX;
+        input.placeholder = "名前";
+        input.autocomplete = "nickname";
+        input.setAttribute("aria-label", `${file.name} を取得する人の名前`);
+        input.value = state.name;
+        const button = el("button", "dl", "ダウンロード");
+        button.type = "button";
+        const msg = el("p", "msg");
+        msg.setAttribute("role", "status");
+        act.append(input, button);
+        row.append(
+          el("div", "file", file.name),
+          el("div", "games", String(file.games)),
+          el("div", "span", formatSpan(file.from, file.to)),
+          who, act, msg,
+        );
+        rows.append(row);
+        const tile = el("i");
+        strip.append(tile);
+
+        const entry = { file, month: m.month, row, who, input, button, msg, tile };
+        state.rows.set(file.name, entry);
+        input.addEventListener("input", () => onNameInput(entry));
+        button.addEventListener("click", () => take(entry));
+      }
+      const empty = el("p", "empty", "この月は、すべて誰かが取得している。");
+      empty.hidden = true;
+      rows.append(empty);
+      box.append(rows);
+      host.append(box);
+      state.months.push({ ...m, el: box, countEl: count, emptyEl: empty });
+    }
+    $("tools").hidden = false;
+  }
+
+  // ---- 記録を画面に反映する ----
+  function setRecords(list) {
+    const map = new Map();
+    for (const r of Array.isArray(list) ? list : []) {
+      if (!r || typeof r.file !== "string" || typeof r.name !== "string") continue;
+      if (!state.rows.has(r.file)) continue;
+      if (!map.has(r.file)) map.set(r.file, []);
+      map.get(r.file).push({ name: r.name, at: typeof r.at === "string" ? r.at : "" });
+    }
+    for (const items of map.values()) items.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+    state.records = map;
+    state.loadedAt = new Date();
+    refresh();
+  }
+
+  // 同じ人は最初の1回だけを出す。
+  function takers(fileName) {
+    const seen = new Set(), out = [];
+    for (const r of state.records.get(fileName) || []) {
+      if (seen.has(r.name)) continue;
+      seen.add(r.name);
+      out.push(r);
+    }
+    return out;
+  }
+
+  function refresh() {
+    const onlyOpen = $("only-open").checked;
+    let takenTotal = 0, total = 0;
+    for (const m of state.months) {
+      let taken = 0, visible = 0;
+      for (const file of m.files) {
+        const entry = state.rows.get(file.name);
+        const list = takers(file.name);
+        const isTaken = list.length > 0;
+        if (isTaken) taken++;
+        entry.row.classList.toggle("taken", isTaken);
+        entry.tile.classList.toggle("on", isTaken);
+        entry.row.hidden = onlyOpen && isTaken && !state.busy.has(file.name) && !entry.msg.textContent;
+        if (!entry.row.hidden) visible++;
+
+        entry.who.textContent = "";
+        if (!isTaken) {
+          entry.who.append(el("span", "none", ENDPOINT ? "まだ誰も取得していない" : "—"));
+        } else {
+          for (const r of list.slice(0, 2)) {
+            const taker = el("span", "tk");
+            taker.append(el("b", "", r.name), el("span", "t", formatAt(r.at)));
+            entry.who.append(taker);
+          }
+          if (list.length > 2) entry.who.append(el("span", "more", `ほか${list.length - 2}人`));
+          entry.who.title = list.map((r) => `${r.name} ${formatAt(r.at)}`).join("\n");
+        }
+        if (!isTaken) entry.who.removeAttribute("title");
+        paintButton(entry);
+      }
+      m.countEl.textContent = "";
+      if (ENDPOINT) m.countEl.append(el("b", "", String(taken)), ` / ${m.files.length} 取得済み`);
+      else m.countEl.append(el("b", "", String(m.files.length)), " ファイル");
+      m.el.classList.toggle("done", !!ENDPOINT && taken === m.files.length);
+      m.emptyEl.hidden = visible > 0;
+      takenTotal += taken;
+      total += m.files.length;
+    }
+
+    const meta = $("meta");
+    meta.textContent = "";
+    const stat = (label, value) => {
+      const span = el("span", "", `${label} `);
+      span.append(el("b", "", String(value)));
+      return span;
+    };
+    meta.append(stat("ファイル", total));
+    if (ENDPOINT && state.loadedAt) meta.append(stat("取得済み", takenTotal), stat("未取得", total - takenTotal));
+
+    if (ENDPOINT && state.loadedAt) {
+      $("sync").hidden = false;
+      $("sync-text").textContent = `取得状況は ${pad(state.loadedAt.getHours())}:${pad(state.loadedAt.getMinutes())} 時点`;
+    }
+  }
+
+  function paintButton(entry) {
+    const name = entry.file.name;
+    const busy = state.busy.has(name);
+    const confirming = state.confirm === name;
+    const mine = state.name && takers(name).some((r) => r.name === state.name);
+    entry.button.disabled = busy;
+    entry.button.classList.toggle("warn", confirming && !busy);
+    entry.button.classList.toggle("again", !confirming && !busy && !!mine);
+    entry.button.textContent = busy ? "記録中…" : confirming ? "それでも取得" : mine ? "もう一度取得" : "ダウンロード";
+  }
+
+  function say(entry, text, kind) {
+    entry.msg.textContent = text || "";
+    entry.msg.className = "msg" + (kind ? " " + kind : "");
+  }
+
+  // 最初に開く月: まだ取得されていないファイルがある、いちばん古い月。
+  function openFirst() {
+    if (state.opened || !state.months.length) return;
+    state.opened = true;
+    const target = state.months.find((m) => m.files.some((f) => !takers(f.name).length)) || state.months[0];
+    target.el.open = true;
+  }
+
+  // ---- 名前の入力(どの行に入れても、全部の行に同じ名前が入る) ----
+  function onNameInput(source) {
+    state.name = cleanName(source.input.value);
+    saveName(state.name);
+    if (state.confirm) { const prev = state.rows.get(state.confirm); state.confirm = null; if (prev) say(prev, ""); }
+    for (const entry of state.rows.values()) {
+      if (entry !== source) entry.input.value = source.input.value;
+      paintButton(entry);
+    }
+    if (source.msg.classList.contains("err")) say(source, "");
+  }
+
+  // ---- 記録先とのやりとり ----
+  async function request(options) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const url = options.body ? ENDPOINT : ENDPOINT + (ENDPOINT.includes("?") ? "&" : "?") + "t=" + Date.now();
+      // text/plain で送る。JSON の種類で送ると、記録先が事前確認の通信に応えられず失敗する。
+      const res = await fetch(url, options.body
+        ? { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(options.body), redirect: "follow", signal: ctrl.signal }
+        : { redirect: "follow", cache: "no-store", signal: ctrl.signal });
+      if (!res.ok) throw new Error("http " + res.status);
+      const data = await res.json();
+      if (!data || typeof data !== "object") throw new Error("bad response");
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  let loading = null;
+  function loadRecords() {
+    if (!ENDPOINT) return Promise.resolve();
+    if (loading) return loading;
+    $("sync-reload").disabled = true;
+    loading = request({})
+      .then((data) => {
+        if (!data.ok) throw new Error(data.error || "error");
+        setRecords(data.records);
+        showNotice("");
+      })
+      .catch(() => {
+        showNotice(state.loadedAt
+          ? "取得状況を更新できなかった。表示が古い可能性がある。"
+          : "取得状況を読み込めなかった。誰が取得済みかは表示されていない。", true);
+      })
+      .finally(() => {
+        loading = null;
+        $("sync-reload").disabled = false;
+        openFirst();
+      });
+    return loading;
+  }
+
+  function showNotice(text, retry) {
+    $("notice").hidden = !text;
+    $("notice-text").textContent = text;
+    $("notice-retry").hidden = !retry;
+  }
+
+  // ---- ダウンロード ----
+  async function download(file) {
+    const res = await fetch(file.path, { cache: "no-store" });
+    if (!res.ok) throw new Error("http " + res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file.name;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  const others = (fileName) => takers(fileName).filter((r) => r.name !== state.name).map((r) => r.name);
+  const takenText = (names) => `${names.join("、")} が取得済み。もう一度押すと、自分の名前も記録して取得する。`;
+
+  async function take(entry) {
+    const name = entry.file.name;
+    if (state.busy.has(name)) return;
+
+    // 別の行の確認待ちは取り消す。
+    if (state.confirm && state.confirm !== name) {
+      const prev = state.rows.get(state.confirm);
+      state.confirm = null;
+      if (prev) { say(prev, ""); paintButton(prev); }
+    }
+
+    if (ENDPOINT && !state.name) {
+      say(entry, "名前を入れてから押す。", "err");
+      entry.input.focus();
+      return;
+    }
+
+    let force = state.confirm === name;
+    if (ENDPOINT && !force && others(name).length) {
+      state.confirm = name;
+      say(entry, takenText(others(name)), "err");
+      paintButton(entry);
+      return;
+    }
+    state.confirm = null;
+
+    state.busy.add(name);
+    say(entry, "");
+    paintButton(entry);
+    let recorded = !ENDPOINT;
+    try {
+      if (ENDPOINT) {
+        const data = await request({ body: { file: name, name: state.name, force } });
+        if (Array.isArray(data.records)) setRecords(data.records);
+        if (!data.ok && data.error === "taken") {
+          // 一覧を開いたあとに、ほかの人が取得していた。
+          state.confirm = name;
+          say(entry, takenText(others(name).length ? others(name) : ["ほかの人"]), "err");
+          return;
+        }
+        if (!data.ok && data.error === "invalid") {
+          say(entry, "この名前は記録できない。別の名前を入れてから押す。", "err");
+          entry.input.focus();
+          return;
+        }
+        if (!data.ok) throw new Error(data.error || "error");
+        recorded = true;
+      }
+      await download(entry.file);
+      say(entry, ENDPOINT ? "記録して、ダウンロードした。" : "ダウンロードした(記録はされていない)。", "ok");
+    } catch (_) {
+      say(entry, recorded
+        ? (ENDPOINT ? "記録はした。ファイルを取得できなかったので、もう一度押す。" : "ファイルを取得できなかった。もう一度押す。")
+        : "記録できなかったので、ダウンロードしていない。少し待ってから、もう一度押す。", "err");
+    } finally {
+      state.busy.delete(name);
+      paintButton(entry);
+    }
+  }
+
+  // ---- 起動 ----
+  state.name = cleanName(loadName());
+  $("only-open").addEventListener("change", refresh);
+  $("sync-reload").addEventListener("click", loadRecords);
+  $("notice-retry").addEventListener("click", loadRecords);
+
+  fetch("files.json", { cache: "no-store" })
+    .then((res) => { if (!res.ok) throw new Error("http " + res.status); return res.json(); })
+    .then((manifest) => {
+      build(manifest);
+      refresh();
+      if (!ENDPOINT) {
+        showNotice("記録先がまだ設定されていない。ダウンロードはできるが、誰が取得したかは残らない。");
+        $("only-open").closest("label").hidden = true;
+        openFirst();
+        return;
+      }
+      loadRecords();
+      setInterval(() => {
+        if (document.visibilityState === "visible" && !state.busy.size && !state.confirm) loadRecords();
+      }, REFRESH_MS);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && !state.busy.size && !state.confirm) loadRecords();
+      });
+    })
+    .catch(() => {
+      $("months").textContent = "";
+      $("months").append(el("p", "loading", "一覧を読み込めなかった。ページを再読み込みする。"));
+      $("meta").textContent = "";
+    });
+})();
+</script>
+</body>
+</html>
