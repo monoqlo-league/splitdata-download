@@ -122,10 +122,12 @@ footer p{margin:0}
 <main id="months"><p class="loading">一覧を読み込み中…</p></main>
 
 <footer>
-  <p>名前は入力したとおりに記録され、このページを開いた人全員に表示される。一度入れた名前は、このブラウザが覚える。</p>
+  <p>名前は、取得するファイルの行ごとに入れる。入力したとおりに記録され、このページを開いた人全員に表示される。一度使った名前は、入力欄の候補に出る。</p>
   <p>取得したCSVは、拡張機能「雀魂 牌譜スタッツ出力」の「対局一覧のCSVを読み込む」で読み込む。</p>
 </footer>
 </div>
+
+<datalist id="known-names"></datalist>
 
 <script src="config.js"></script>
 <script>
@@ -134,7 +136,9 @@ footer p{margin:0}
 
   const CONFIG = window.SPLITDATA_CONFIG || {};
   const ENDPOINT = typeof CONFIG.endpoint === "string" ? CONFIG.endpoint.trim() : "";
-  const NAME_KEY = "splitdata-name";
+  const NAMES_KEY = "splitdata-names";   // このブラウザで使った名前(入力欄の候補に出す)
+  const OLD_NAME_KEY = "splitdata-name";  // 以前の版が覚えていた名前
+  const KNOWN_MAX = 5;
   const NAME_MAX = 30;
   const REQUEST_TIMEOUT_MS = 20000;
   const REFRESH_MS = 60000;
@@ -151,7 +155,6 @@ footer p{margin:0}
     months: [],          // [{month, files:[{name,path,games,from,to}], el, countEl, emptyEl}]
     rows: new Map(),     // ファイル名 → {file, month, row, who, input, button, msg, tile}
     records: new Map(),  // ファイル名 → [{name, at}](古い順)
-    name: "",
     confirm: null,       // 「それでも取得」の確認待ちのファイル名
     busy: new Set(),
     loadedAt: null,
@@ -168,11 +171,36 @@ footer p{margin:0}
       .slice(0, NAME_MAX)
       .trim();
   }
-  function loadName() {
-    try { return localStorage.getItem(NAME_KEY) || ""; } catch (_) { return ""; }
+  // 名前は行ごとに入れる。ほかの行には写さない。
+  const nameOf = (entry) => cleanName(entry.input.value);
+
+  // 使ったことのある名前は、入力欄の候補として出す(勝手には入れない)。
+  function knownNames() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(NAMES_KEY) || "[]");
+      const list = Array.isArray(saved) ? saved.filter((v) => typeof v === "string") : [];
+      const old = cleanName(localStorage.getItem(OLD_NAME_KEY));
+      if (old && !list.includes(old)) list.push(old);
+      return list.map(cleanName).filter(Boolean).slice(0, KNOWN_MAX);
+    } catch (_) {
+      return [];
+    }
   }
-  function saveName(value) {
-    try { localStorage.setItem(NAME_KEY, value); } catch (_) { /* 覚えられなくても動く */ }
+  function renderKnownNames() {
+    const host = $("known-names");
+    host.textContent = "";
+    for (const name of knownNames()) {
+      const option = document.createElement("option");
+      option.value = name;
+      host.append(option);
+    }
+  }
+  function rememberName(name) {
+    try {
+      const list = [name, ...knownNames().filter((v) => v !== name)].slice(0, KNOWN_MAX);
+      localStorage.setItem(NAMES_KEY, JSON.stringify(list));
+    } catch (_) { /* 覚えられなくても動く */ }
+    renderKnownNames();
   }
 
   // ---- 表示の整形 ----
@@ -223,9 +251,9 @@ footer p{margin:0}
         input.type = "text";
         input.maxLength = NAME_MAX;
         input.placeholder = "名前";
-        input.autocomplete = "nickname";
+        input.autocomplete = "off";
+        input.setAttribute("list", "known-names");
         input.setAttribute("aria-label", `${file.name} を取得する人の名前`);
-        input.value = state.name;
         const button = el("button", "dl", "ダウンロード");
         button.type = "button";
         const msg = el("p", "msg");
@@ -341,7 +369,8 @@ footer p{margin:0}
     const name = entry.file.name;
     const busy = state.busy.has(name);
     const confirming = state.confirm === name;
-    const mine = state.name && takers(name).some((r) => r.name === state.name);
+    const own = nameOf(entry);
+    const mine = own && takers(name).some((r) => r.name === own);
     entry.button.disabled = busy;
     entry.button.classList.toggle("warn", confirming && !busy);
     entry.button.classList.toggle("again", !confirming && !busy && !!mine);
@@ -361,16 +390,12 @@ footer p{margin:0}
     target.el.open = true;
   }
 
-  // ---- 名前の入力(どの行に入れても、全部の行に同じ名前が入る) ----
-  function onNameInput(source) {
-    state.name = cleanName(source.input.value);
-    saveName(state.name);
-    if (state.confirm) { const prev = state.rows.get(state.confirm); state.confirm = null; if (prev) say(prev, ""); }
-    for (const entry of state.rows.values()) {
-      if (entry !== source) entry.input.value = source.input.value;
-      paintButton(entry);
-    }
-    if (source.msg.classList.contains("err")) say(source, "");
+  // ---- 名前の入力(その行だけに効く) ----
+  function onNameInput(entry) {
+    // 名前を変えたら、その行の確認待ちと注意の表示は取り消す。
+    if (state.confirm === entry.file.name) state.confirm = null;
+    if (entry.msg.classList.contains("err")) say(entry, "");
+    paintButton(entry);
   }
 
   // ---- 記録先とのやりとり ----
@@ -437,7 +462,7 @@ footer p{margin:0}
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
-  const others = (fileName) => takers(fileName).filter((r) => r.name !== state.name).map((r) => r.name);
+  const others = (entry) => takers(entry.file.name).filter((r) => r.name !== nameOf(entry)).map((r) => r.name);
   const takenText = (names) => `${names.join("、")} が取得済み。もう一度押すと、自分の名前も記録して取得する。`;
 
   async function take(entry) {
@@ -451,16 +476,17 @@ footer p{margin:0}
       if (prev) { say(prev, ""); paintButton(prev); }
     }
 
-    if (ENDPOINT && !state.name) {
+    const own = nameOf(entry);
+    if (ENDPOINT && !own) {
       say(entry, "名前を入れてから押す。", "err");
       entry.input.focus();
       return;
     }
 
     let force = state.confirm === name;
-    if (ENDPOINT && !force && others(name).length) {
+    if (ENDPOINT && !force && others(entry).length) {
       state.confirm = name;
-      say(entry, takenText(others(name)), "err");
+      say(entry, takenText(others(entry)), "err");
       paintButton(entry);
       return;
     }
@@ -472,12 +498,12 @@ footer p{margin:0}
     let recorded = !ENDPOINT;
     try {
       if (ENDPOINT) {
-        const data = await request({ body: { file: name, name: state.name, force } });
+        const data = await request({ body: { file: name, name: own, force } });
         if (Array.isArray(data.records)) setRecords(data.records);
         if (!data.ok && data.error === "taken") {
           // 一覧を開いたあとに、ほかの人が取得していた。
           state.confirm = name;
-          say(entry, takenText(others(name).length ? others(name) : ["ほかの人"]), "err");
+          say(entry, takenText(others(entry).length ? others(entry) : ["ほかの人"]), "err");
           return;
         }
         if (!data.ok && data.error === "invalid") {
@@ -487,6 +513,7 @@ footer p{margin:0}
         }
         if (!data.ok) throw new Error(data.error || "error");
         recorded = true;
+        rememberName(own);
       }
       await download(entry.file);
       say(entry, ENDPOINT ? "記録して、ダウンロードした。" : "ダウンロードした(記録はされていない)。", "ok");
@@ -501,7 +528,7 @@ footer p{margin:0}
   }
 
   // ---- 起動 ----
-  state.name = cleanName(loadName());
+  renderKnownNames();
   $("only-open").addEventListener("change", refresh);
   $("sync-reload").addEventListener("click", loadRecords);
   $("notice-retry").addEventListener("click", loadRecords);
