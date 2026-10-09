@@ -35,6 +35,17 @@ h1{font-size:clamp(26px,5vw,36px);font-weight:900;line-height:1.25;margin:0;text
 .kitbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .kit .link{font-size:14px}
 .kitnote{flex-basis:100%;margin:0;font-size:12px;color:var(--muted)}
+/* 拡張機能の安全性(開いて読む) */
+.safety{margin:0 0 12px;max-width:52em;font-size:13px}
+.safety>summary{cursor:pointer;display:inline-block;font-weight:700;color:var(--accent);border-bottom:1px dashed var(--accent);list-style:none}
+.safety>summary::-webkit-details-marker{display:none}
+.safety>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+.safety .body{margin-top:10px;padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface);display:grid;gap:8px}
+.safety ul{margin:0;padding-left:1.3em;display:grid;gap:4px}
+.safety p{margin:0}
+.safety a{color:var(--accent)}
+.safety code{font-family:"IBM Plex Mono",monospace;font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.safety .hash{display:block;overflow-wrap:anywhere;padding:6px 8px;margin-top:2px}
 .meta{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:4px 18px}
 .meta b,.mono{font-family:"IBM Plex Mono",monospace;font-weight:500;color:var(--ink)}
 
@@ -120,8 +131,26 @@ footer p{margin:0}
   <div class="kit">
     <a class="kitbtn" id="kit-zip" href="downloads/majsoul-paifu-list.zip" download="majsoul-paifu-list.zip">拡張機能をダウンロード(ZIP)</a>
     <a class="link" id="kit-manual" href="downloads/majsoul-paifu-list-manual.pdf" target="_blank" rel="noopener">使い方マニュアル(PDF)</a>
+    <a class="link" id="kit-source" href="https://github.com/monoqlo-league/majsoul-paifu-list" target="_blank" rel="noopener">ソースコード(GitHub)</a>
     <p class="kitnote">CSVの牌譜を取得する拡張機能「雀魂 牌譜スタッツ出力 リスト取得版」v1.0.0。入れ方と使い方は、マニュアルにある。</p>
   </div>
+  <details class="safety" id="safety">
+    <summary>この拡張機能の安全性について</summary>
+    <div class="body">
+      <p>この拡張機能がすること・しないことは次のとおり。ソースはすべて公開していて、誰でも読んで確かめられる。</p>
+      <ul>
+        <li>使う権限は「保存領域(storage)」と「ダウンロード(downloads)」の2つだけ。閲覧履歴、Cookie、ほかのタブの中身は読めない。</li>
+        <li>動くのは雀魂のページだけ。ほかのサイトでは動かない。</li>
+        <li>外部のサーバーには何も送らない。通信するのは、雀魂に牌譜の要求を送るときだけ(雀魂で牌譜を開くときと同じ形)。</li>
+        <li>ログイン情報は保存も送信もしない。ログイン時の通信から読むのは、雀魂のバージョン文字列だけ。</li>
+        <li>取得した成績はブラウザの中にだけ残る。外に出るのは、自分で「CSVを保存」したファイルだけ。</li>
+      </ul>
+      <p>ソースコード: <a href="https://github.com/monoqlo-league/majsoul-paifu-list" target="_blank" rel="noopener">github.com/monoqlo-league/majsoul-paifu-list</a>(README の「安全性について」に、確かめる場所を載せている)。配布しているZIPは、コミット <a href="https://github.com/monoqlo-league/majsoul-paifu-list/tree/ce791250b1ea5b0db43135d3bd0eb646ba7ac69f" target="_blank" rel="noopener"><code>ce79125</code></a> をそのままZIPにしたもの。</p>
+      <p>ZIPの指紋(SHA-256):<code class="hash" id="zip-sha256">7f880871822a1482ebe83bf9383c728405cde524c6a62781a9c0912d64ebb545</code></p>
+      <p>確かめ方: Windowsは PowerShell で <code>Get-FileHash .\majsoul-paifu-list.zip</code>、Macはターミナルで <code>shasum -a 256 majsoul-paifu-list.zip</code> を実行する。表示された値が上と同じなら、このページで配っているZIPそのもの。</p>
+      <p>拡張機能が悪さをしなくても、ログイン中のアカウントで雀魂に要求を送ることに変わりはない。アカウントへの影響が無いとは言い切れないので、サブアカウントでの利用を推奨する。</p>
+    </div>
+  </details>
   <div class="meta" id="meta"><span>読み込み中…</span></div>
 </header>
 

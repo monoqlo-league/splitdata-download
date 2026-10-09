@@ -65,7 +65,14 @@ GitHub Pages は置いてあるファイルを見せるだけで、入力を保�
 ## 拡張機能やマニュアルを新しくしたとき
 
 `downloads/` の同じ名前のファイルを、新しいもので上書きしてコミットする。ページのボタンとリンクは、そのまま新しいファイルを指す。
-拡張機能の版が変わったら、`index.html` の説明文にある版の番号(`v1.0.0`)も書き換える。
+
+拡張機能のZIPを新しくしたときは、`index.html` の次の3か所も書き換える。
+
+- 説明文にある版の番号(`v1.0.0`)
+- 「この拡張機能の安全性について」にある、ZIPを作ったコミット(ソースのリポジトリ `majsoul-paifu-list` のコミット)
+- 同じ欄にあるZIPの指紋(SHA-256)。`sha256sum downloads/majsoul-paifu-list.zip` などで出す
+
+ZIPは、ソースのリポジトリのコミットから `git archive --format=zip --prefix=majsoul-paifu-list/ -o majsoul-paifu-list.zip <コミット>` で作る。
 
 ## CSVを足したり入れ替えたりしたとき
 
