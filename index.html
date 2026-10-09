@@ -153,7 +153,11 @@ footer p{margin:0}
   const OLD_NAME_KEY = "splitdata-name";  // 以前の版が覚えていた名前
   const KNOWN_MAX = 5;
   const NAME_MAX = 30;
-  const REQUEST_TIMEOUT_MS = 20000;
+  // 記録先(Googleのスクリプト)は、混んでいると1回の通信に10秒以上かかることがある。
+  const READ_TIMEOUT_MS = Number(CONFIG.readTimeoutMs) || 45000;
+  const WRITE_TIMEOUT_MS = Number(CONFIG.writeTimeoutMs) || 60000;
+  // 記録に失敗したら、この間隔をあけて自動で送り直す(同じ人・同じファイルの記録は二重にならない)。
+  const RETRY_DELAYS_MS = Array.isArray(CONFIG.retryDelaysMs) ? CONFIG.retryDelaysMs : [3000, 10000];
   const REFRESH_MS = 60000;
 
   const $ = (id) => document.getElementById(id);
@@ -169,7 +173,9 @@ footer p{margin:0}
     rows: new Map(),     // ファイル名 → {file, month, row, who, input, button, msg, tile}
     records: new Map(),  // ファイル名 → [{name, at}](古い順)
     confirm: null,       // 「それでも取得」の確認待ちのファイル名
-    busy: new Set(),
+    busy: new Set(),     // ダウンロード中のファイル名
+    recording: new Set(),  // 記録を送っている途中のファイル名
+    unrecorded: new Map(), // ダウンロードしたが記録できなかったファイル名 → 名前
     loadedAt: null,
     opened: false,
   };
@@ -335,7 +341,8 @@ footer p{margin:0}
         if (isTaken) taken++;
         entry.row.classList.toggle("taken", isTaken);
         entry.tile.classList.toggle("on", isTaken);
-        entry.row.hidden = onlyOpen && isTaken && !state.busy.has(file.name) && !entry.msg.textContent;
+        entry.row.hidden = onlyOpen && isTaken && !state.busy.has(file.name) && !state.recording.has(file.name)
+          && !state.unrecorded.has(file.name) && !entry.msg.textContent;
         if (!entry.row.hidden) visible++;
 
         entry.who.textContent = "";
@@ -380,14 +387,16 @@ footer p{margin:0}
 
   function paintButton(entry) {
     const name = entry.file.name;
-    const busy = state.busy.has(name);
-    const confirming = state.confirm === name;
+    const busy = state.busy.has(name) || state.recording.has(name);
+    const retry = !busy && state.unrecorded.has(name);
+    const confirming = !busy && !retry && state.confirm === name;
     const own = nameOf(entry);
     const mine = own && takers(name).some((r) => r.name === own);
     entry.button.disabled = busy;
-    entry.button.classList.toggle("warn", confirming && !busy);
-    entry.button.classList.toggle("again", !confirming && !busy && !!mine);
-    entry.button.textContent = busy ? "記録中…" : confirming ? "それでも取得" : mine ? "もう一度取得" : "ダウンロード";
+    entry.button.classList.toggle("warn", confirming || retry);
+    entry.button.classList.toggle("again", !busy && !retry && !confirming && !!mine);
+    entry.button.textContent = state.busy.has(name) ? "保存中…" : state.recording.has(name) ? "記録中…"
+      : retry ? "記録を送り直す" : confirming ? "それでも取得" : mine ? "もう一度取得" : "ダウンロード";
   }
 
   function say(entry, text, kind) {
@@ -414,7 +423,7 @@ footer p{margin:0}
   // ---- 記録先とのやりとり ----
   async function request(options) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort(), options.body ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS);
     try {
       const url = options.body ? ENDPOINT : ENDPOINT + (ENDPOINT.includes("?") ? "&" : "?") + "t=" + Date.now();
       // text/plain で送る。JSON の種類で送ると、記録先が事前確認の通信に応えられず失敗する。
@@ -477,16 +486,25 @@ footer p{margin:0}
 
   const others = (entry) => takers(entry.file.name).filter((r) => r.name !== nameOf(entry)).map((r) => r.name);
   const takenText = (names) => `${names.join("、")} が取得済み。もう一度押すと、自分の名前も記録して取得する。`;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  // 押したらすぐにダウンロードし、記録は裏で送る。
+  // 記録先は混んでいると遅いので、記録を待ってからダウンロードすると、待ちくたびれて失敗しやすいため。
   async function take(entry) {
     const name = entry.file.name;
-    if (state.busy.has(name)) return;
+    if (state.busy.has(name) || state.recording.has(name)) return;
 
     // 別の行の確認待ちは取り消す。
     if (state.confirm && state.confirm !== name) {
       const prev = state.rows.get(state.confirm);
       state.confirm = null;
       if (prev) { say(prev, ""); paintButton(prev); }
+    }
+
+    // ダウンロード済みで、記録だけできていない行: 記録だけを送り直す。
+    if (state.unrecorded.has(name)) {
+      record(entry, nameOf(entry) || state.unrecorded.get(name));
+      return;
     }
 
     const own = nameOf(entry);
@@ -496,8 +514,7 @@ footer p{margin:0}
       return;
     }
 
-    let force = state.confirm === name;
-    if (ENDPOINT && !force && others(entry).length) {
+    if (ENDPOINT && state.confirm !== name && others(entry).length) {
       state.confirm = name;
       say(entry, takenText(others(entry)), "err");
       paintButton(entry);
@@ -508,37 +525,70 @@ footer p{margin:0}
     state.busy.add(name);
     say(entry, "");
     paintButton(entry);
-    let recorded = !ENDPOINT;
     try {
-      if (ENDPOINT) {
-        const data = await request({ body: { file: name, name: own, force } });
-        if (Array.isArray(data.records)) setRecords(data.records);
-        if (!data.ok && data.error === "taken") {
-          // 一覧を開いたあとに、ほかの人が取得していた。
-          state.confirm = name;
-          say(entry, takenText(others(entry).length ? others(entry) : ["ほかの人"]), "err");
-          return;
-        }
-        if (!data.ok && data.error === "invalid") {
-          say(entry, "この名前は記録できない。別の名前を入れてから押す。", "err");
-          entry.input.focus();
-          return;
-        }
-        if (!data.ok) throw new Error(data.error || "error");
-        recorded = true;
-        rememberName(own);
-      }
       await download(entry.file);
-      say(entry, ENDPOINT ? "記録して、ダウンロードした。" : "ダウンロードした(記録はされていない)。", "ok");
     } catch (_) {
-      say(entry, recorded
-        ? (ENDPOINT ? "記録はした。ファイルを取得できなかったので、もう一度押す。" : "ファイルを取得できなかった。もう一度押す。")
-        : "記録できなかったので、ダウンロードしていない。少し待ってから、もう一度押す。", "err");
+      say(entry, "ファイルを取得できなかった。もう一度押す。", "err");
+      return;
     } finally {
       state.busy.delete(name);
       paintButton(entry);
     }
+    if (!ENDPOINT) {
+      say(entry, "ダウンロードした(記録はされていない)。", "ok");
+      return;
+    }
+    record(entry, own);
   }
+
+  // 記録を送る。失敗したら間隔をあけて送り直し、それでもだめなら「記録を送り直す」を出す。
+  async function record(entry, own) {
+    const name = entry.file.name;
+    state.unrecorded.delete(name);
+    state.recording.add(name);
+    paintButton(entry);
+    say(entry, "ダウンロードした。記録を送っている(混んでいると数十秒かかる)。");
+    let done = false;
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length && !done; attempt++) {
+      if (attempt > 0) {
+        say(entry, `ダウンロードした。記録を送り直している(${attempt + 1}回目)。`);
+        await sleep(RETRY_DELAYS_MS[attempt - 1]);
+      }
+      try {
+        // ダウンロードは済んでいるので、ほかの人が取得済みでも記録する(force)。
+        const data = await request({ body: { file: name, name: own, force: true } });
+        if (Array.isArray(data.records)) setRecords(data.records);
+        if (!data.ok && data.error === "invalid") {
+          state.recording.delete(name);
+          state.unrecorded.set(name, own);
+          say(entry, "ダウンロードはした。この名前は記録できないので、名前を直してから「記録を送り直す」を押す。", "err");
+          paintButton(entry);
+          return;
+        }
+        if (data.ok) done = true;
+      } catch (_) {
+        // 打ち切りや通信の失敗。次の回で送り直す。
+      }
+    }
+    state.recording.delete(name);
+    if (done) {
+      rememberName(own);
+      say(entry, "ダウンロードして、記録した。", "ok");
+    } else {
+      state.unrecorded.set(name, own);
+      say(entry, "ダウンロードはした。記録できなかったので、少し待ってから「記録を送り直す」を押す。", "err");
+    }
+    paintButton(entry);
+    refresh();
+  }
+
+  // 記録を送っている途中や、記録できていない行があるときは、ページを閉じる前に確かめる。
+  window.addEventListener("beforeunload", (event) => {
+    if (state.recording.size || state.unrecorded.size) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
 
   // ---- 起動 ----
   renderKnownNames();
