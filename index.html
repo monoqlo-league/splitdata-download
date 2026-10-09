@@ -152,6 +152,8 @@ footer p{margin:0}
   const NAMES_KEY = "splitdata-names";   // このブラウザで使った名前(入力欄の候補に出す)
   const OLD_NAME_KEY = "splitdata-name";  // 以前の版が覚えていた名前
   const KNOWN_MAX = 5;
+  // 前回読み込んだ取得状況。開いた瞬間はこれを出し、最新が届いたら差し替える。
+  const CACHE_KEY = "splitdata-records";
   const NAME_MAX = 30;
   // 記録先(Googleのスクリプト)は、混んでいると1回の通信に10秒以上かかることがある。
   const READ_TIMEOUT_MS = Number(CONFIG.readTimeoutMs) || 45000;
@@ -176,7 +178,8 @@ footer p{margin:0}
     busy: new Set(),     // ダウンロード中のファイル名
     recording: new Set(),  // 記録を送っている途中のファイル名
     unrecorded: new Map(), // ダウンロードしたが記録できなかったファイル名 → 名前
-    loadedAt: null,
+    loadedAt: null,      // いま出している取得状況の時点(まだ何も無ければ null)
+    fromCache: false,    // いま出している取得状況が、前回の保存分かどうか
     opened: false,
   };
 
@@ -304,7 +307,21 @@ footer p{margin:0}
   }
 
   // ---- 記録を画面に反映する ----
-  function setRecords(list) {
+  function saveCache(list) {
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ at: new Date().toISOString(), records: list })); } catch (_) { /* 保存できなくても動く */ }
+  }
+  function applyCache() {
+    try {
+      const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+      if (!cache || !Array.isArray(cache.records) || isNaN(Date.parse(cache.at))) return false;
+      setRecords(cache.records, { cached: true, at: cache.at });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setRecords(list, options = {}) {
     const map = new Map();
     for (const r of Array.isArray(list) ? list : []) {
       if (!r || typeof r.file !== "string" || typeof r.name !== "string") continue;
@@ -314,7 +331,9 @@ footer p{margin:0}
     }
     for (const items of map.values()) items.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
     state.records = map;
-    state.loadedAt = new Date();
+    state.loadedAt = options.at ? new Date(options.at) : new Date();
+    state.fromCache = Boolean(options.cached);
+    if (!options.cached) saveCache(list);
     refresh();
   }
 
@@ -331,6 +350,8 @@ footer p{margin:0}
 
   function refresh() {
     const onlyOpen = $("only-open").checked;
+    // 取得状況がまだ一度も届いていないときは、0件と出さずに「読み込み中」と出す。
+    const known = !ENDPOINT || Boolean(state.loadedAt);
     let takenTotal = 0, total = 0;
     for (const m of state.months) {
       let taken = 0, visible = 0;
@@ -347,7 +368,7 @@ footer p{margin:0}
 
         entry.who.textContent = "";
         if (!isTaken) {
-          entry.who.append(el("span", "none", ENDPOINT ? "まだ誰も取得していない" : "—"));
+          entry.who.append(el("span", "none", !ENDPOINT ? "—" : known ? "まだ誰も取得していない" : "読み込み中…"));
         } else {
           for (const r of list.slice(0, 2)) {
             const taker = el("span", "tk");
@@ -361,7 +382,8 @@ footer p{margin:0}
         paintButton(entry);
       }
       m.countEl.textContent = "";
-      if (ENDPOINT) m.countEl.append(el("b", "", String(taken)), ` / ${m.files.length} 取得済み`);
+      if (ENDPOINT && !known) m.countEl.append("読み込み中…");
+      else if (ENDPOINT) m.countEl.append(el("b", "", String(taken)), ` / ${m.files.length} 取得済み`);
       else m.countEl.append(el("b", "", String(m.files.length)), " ファイル");
       m.el.classList.toggle("done", !!ENDPOINT && taken === m.files.length);
       m.emptyEl.hidden = visible > 0;
@@ -378,10 +400,14 @@ footer p{margin:0}
     };
     meta.append(stat("ファイル", total));
     if (ENDPOINT && state.loadedAt) meta.append(stat("取得済み", takenTotal), stat("未取得", total - takenTotal));
+    else if (ENDPOINT) meta.append(el("span", "", "取得状況を読み込み中…"));
 
     if (ENDPOINT && state.loadedAt) {
       $("sync").hidden = false;
-      $("sync-text").textContent = `取得状況は ${pad(state.loadedAt.getHours())}:${pad(state.loadedAt.getMinutes())} 時点`;
+      const time = `${pad(state.loadedAt.getHours())}:${pad(state.loadedAt.getMinutes())}`;
+      $("sync-text").textContent = state.fromCache
+        ? `取得状況は ${time} 時点(前回の表示。最新を読み込み中…)`
+        : `取得状況は ${time} 時点`;
     }
   }
 
@@ -607,6 +633,8 @@ footer p{margin:0}
         openFirst();
         return;
       }
+      // 前回の取得状況があれば先に出し、最初に開く月もそれで決める。
+      if (applyCache()) openFirst();
       loadRecords();
       setInterval(() => {
         if (document.visibilityState === "visible" && !state.busy.size && !state.confirm) loadRecords();
