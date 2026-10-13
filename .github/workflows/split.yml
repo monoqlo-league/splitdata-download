@@ -1,0 +1,52 @@
+# 対局記録のCSV(monoqlo-data の YYYYMM.csv)から、まだ入っていない対局を10対局ずつの分割CSVにして足す。
+# - monoqlo-data に YYYYMM.csv がアップロードされると、そちらのワークフローがこれを呼ぶ(repository_dispatch)。
+# - 呼び出しが届かなかったときのために、1日1回も自分で確かめる。
+# - 「Actions」タブから手動でも実行できる。
+# 分割のきまりは tools/split-new.py の冒頭を参照。
+name: 分割CSVを足す
+
+on:
+  repository_dispatch:
+    types: [monoqlo-data-updated]
+  schedule:
+    - cron: "17 19 * * *" # 毎日 4:17(日本時間)
+  workflow_dispatch:
+
+concurrency:
+  group: split
+  cancel-in-progress: false
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: 対局記録を取ってくる
+        uses: actions/checkout@v4
+        with:
+          repository: monoqlo-league/monoqlo-data
+          path: _data
+      - name: 分割する
+        id: split
+        run: python3 tools/split-new.py _data
+      - name: 保存して公開する
+        if: steps.split.outputs.made != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node tools/build-manifest.js
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add '[0-9][0-9][0-9][0-9][0-9][0-9]/*.csv' files.json
+          git commit -q -m "分割CSVを ${{ steps.split.outputs.made }} ファイル追加(自動)"
+          ok=
+          for i in 1 2 3; do
+            if git pull -q --rebase origin main && git push -q origin HEAD:main; then ok=1; break; fi
+            sleep 5
+          done
+          [ -n "$ok" ] || exit 1
+          # 念のため、公開ページの作り直しも頼む(失敗しても止めない)
+          gh api -X POST "repos/${{ github.repository }}/pages/builds" >/dev/null || echo "ページの作り直しの依頼は通らなかった(自動で作り直されていれば問題ない)"
