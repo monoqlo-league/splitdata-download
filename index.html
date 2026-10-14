@@ -109,6 +109,21 @@ h1{font-size:clamp(26px,5vw,36px);font-weight:900;line-height:1.25;margin:0;text
 footer{font-size:12px;color:var(--muted);display:grid;gap:4px;max-width:60em}
 footer p{margin:0}
 
+/* DL協力者ランキング(取得したファイル数の上位3位) */
+.board{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px 12px;display:grid;gap:10px}
+.board h2{margin:0;font-size:15px;font-weight:900;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+.board h2 small{font-size:12px;font-weight:500;color:var(--muted)}
+.podium{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.podium li{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto;column-gap:10px;align-items:center;padding:10px 12px;border-radius:10px;background:var(--bg);border:1px solid var(--line)}
+.podium li.r1{background:var(--accent-soft);border-color:var(--accent)}
+.podium .rk{grid-row:1/3;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:15px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}
+.podium li.r1 .rk{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+.podium .nm{font-weight:900;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.podium .sc{font-size:12px;color:var(--muted)}
+.podium .sc b{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:14px;color:var(--ink)}
+.board .none{margin:0;font-size:14px;color:var(--muted)}
+@media (max-width:760px){.podium{grid-template-columns:1fr}}
+
 @media (max-width:760px){
   .rowhead{display:none}
   .row{grid-template-columns:1fr auto;gap:4px 12px;padding:12px 14px}
@@ -124,6 +139,11 @@ footer p{margin:0}
 </head>
 <body>
 <div class="wrap">
+<section class="board" id="board" hidden aria-labelledby="board-title">
+  <h2 id="board-title">DL協力者ランキング <small>取得したファイル数の上位3位</small></h2>
+  <ol class="podium" id="podium"></ol>
+  <p class="none" id="board-none" hidden>まだ誰も取得していない。</p>
+</section>
 <header>
   <div class="eyebrow">MONOQLO麻雀部</div>
   <h1>分割CSVのダウンロード</h1>
@@ -438,6 +458,48 @@ footer p{margin:0}
         ? `取得状況は ${time} 時点(前回の表示。最新を読み込み中…)`
         : `取得状況は ${time} 時点`;
     }
+    renderBoard();
+  }
+
+  // ---- DL協力者ランキング ----
+  // 人ごとに、取得したファイルの数(同じファイルは1回)を数え、上位3位までを出す。
+  // 並びはファイル数 → 対局数 → 先に取得した順。同じ数なら同じ順位にする。
+  function renderBoard() {
+    const board = $("board");
+    if (!ENDPOINT || !state.loadedAt) { board.hidden = true; return; }
+    board.hidden = false;
+    const tally = new Map();
+    for (const [fileName] of state.records) {
+      const entry = state.rows.get(fileName);
+      if (!entry) continue;
+      for (const r of takers(fileName)) {
+        const t = tally.get(r.name) || { name: r.name, files: 0, games: 0, first: r.at || "~" };
+        t.files++;
+        t.games += Number(entry.file.games) || 0;
+        if (r.at && r.at < t.first) t.first = r.at;
+        tally.set(r.name, t);
+      }
+    }
+    const list = [...tally.values()].sort((a, b) =>
+      b.files - a.files || b.games - a.games || (a.first < b.first ? -1 : a.first > b.first ? 1 : 0));
+    const host = $("podium");
+    host.textContent = "";
+    let rank = 0;
+    list.forEach((t, i) => {
+      const prev = list[i - 1];
+      if (!prev || prev.files !== t.files || prev.games !== t.games) rank = i + 1;
+      if (rank > 3) return;
+      const li = el("li", "r" + rank);
+      const sc = el("span", "sc");
+      sc.append(el("b", "", String(t.files)), " ファイル・", el("b", "", String(t.games)), " 対局");
+      const nm = el("span", "nm", t.name);
+      nm.title = t.name;
+      li.append(el("span", "rk", String(rank)), nm, sc);
+      li.setAttribute("aria-label", `${rank}位 ${t.name} ${t.files}ファイル ${t.games}対局`);
+      host.append(li);
+    });
+    $("board-none").hidden = list.length > 0;
+    host.hidden = list.length === 0;
   }
 
   function paintButton(entry) {
