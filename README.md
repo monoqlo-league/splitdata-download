@@ -25,9 +25,10 @@ MONOQLO PTランキングの対局記録(monoqlo-data の `YYYYMM.csv`)を10対�
 | `YYYYMM/YYYYMM-連番.csv` | 個人戦の分割したCSV。1ファイル10対局。開始時間の古い順(202608 までは月の最後だけ端数) |
 | `event/大会/大会-gamesN-開催日.csv` | チーム戦の開催日ごとのCSV(例: `event/20260901/20260901-games2-20261014.csv`)。同じフォルダの `info.json` は、ページに出す大会名とリーグ名 |
 | `index.html` | 一覧とダウンロードのページ |
-| `upload.html` | ゲームデータのアップロードページ(管理者用・トークン版) |
+| `upload.html` | ゲームデータのアップロードページ(管理者用・GitHubでログイン) |
 | `upload2.html` | ゲームデータのアップロードページ(管理者用・合言葉版) |
 | `gas/Upload.gs` | 合言葉版の中継スクリプト(Google Apps Script に貼る) |
+| `gas/Login.gs` | 「GitHubでログイン」の仲立ちスクリプト(Google Apps Script に貼る) |
 | `files.json` | ページが読むファイルの一覧。`tools/build-manifest.js` が作る |
 | `tools/split-new.py` | 対局記録から、まだ入っていない対局を10対局ずつ分割する(自動で動く) |
 | `tools/split-event.py` | チーム戦の対局記録から、対局がそろった開催日の分を1ファイルにする(自動で動く) |
@@ -139,7 +140,7 @@ node tools/build-manifest.js
 
 雀魂から書き出した対局記録(牌譜履歴)と、拡張機能が出力した詳細成績(`-summary.csv`)を、個人戦(monoqlo-data)・チーム戦(event-data)どちらにも上げられる。ファイルは「ファイルを選ぶ」でも、画面への放り込みでも入れられ、何個でもまとめて入れてよい。
 
-- 最初に、管理者それぞれの GitHub のトークン(fine-grained、monoqlo-data と event-data の Contents を Read and write)を入れる。作り方はページにある。トークンはそのブラウザの中にだけ置く。
+- 最初に「GitHubでログイン」を押す。GitHub のログインと許可の画面から戻ると使える。上げられるのは monoqlo-data と event-data に書き込める GitHub アカウントだけで、コミットはログインした人の名前で残る。ログインは8時間ほどで切れる(切れたらもう一度押す)。トークンやパスワードの入力は無い。
 - **対局記録**は中身から行き先を決め、ファイルの中身は変えずに上げる。4人が全員チーム戦の大会マスターにいればチーム戦(リーグは、置いてある対局記録と重なる対局から決める)、そうでなければ個人戦(月は開始時間のいちばん多い月)。月・リーグは画面で替えられる。
   - 置いてある版にあった対局が無くなるときは、止めて知らせる(「それでも上げる」に印を付けたときだけ上げる)。
 - **詳細成績**は、ゲームIDで対局記録と照らし、その対局が入っている月・リーグの `summary/…-summary.csv` に合体する。分割したサマリーを何個入れてもよい。
@@ -147,6 +148,27 @@ node tools/build-manifest.js
   - 置いてある行の並びはそのままにして、足す対局を後ろに足す。BOM 付き・改行 CRLF。
   - 4人そろっていない対局・列の数が合わない行があるファイルは上げない。和了数・立直数の内訳の食い違い、内部IDが空の行(回線切れのCPU)は知らせるだけ。
 - 上げるときは、置き場の最新の版を読み直してから、リポジトリごとに1つのコミットにまとめる。各リポジトリの自動処理(一覧の作り直し・点検・Discord への通知・分割CSVの追加)はいつもどおり動く。
+
+### 「GitHubでログイン」の設定(1回だけ)
+
+ログインには GitHub App を1つ使う。書き込めるのは、その App を入れたリポジトリ(monoqlo-data・event-data)だけで、しかもログインした人に書き込み権限があるときだけ。
+
+1. **GitHub App を作る。** GitHub の monoqlo-league の Organization の「Settings」→ 左下「Developer settings」→「GitHub Apps」→「New GitHub App」。
+   - GitHub App name: 何でもよい(例: `monoqlo-upload`)
+   - Homepage URL: `https://monoqlo-league.github.io/splitdata-download/`
+   - Callback URL: `https://monoqlo-league.github.io/splitdata-download/upload.html`
+   - 「Expire user authorization tokens」は印を付けたまま。「Request user authorization (OAuth) during installation」は付けない。
+   - Webhook の「Active」は印を外す。
+   - Permissions → Repository permissions → **Contents を Read and write**(ほかは No access のまま)。
+   - Where can this GitHub App be installed: **Only on this account**。
+   - 「Create GitHub App」を押す。
+2. できた App のページで、**Client ID** を控える。「Generate a new client secret」を押して出た **Client secret** も控える(1回しか出ない)。
+3. 左の「Install App」→ monoqlo-league の「Install」→「Only select repositories」で **monoqlo-data** と **event-data** を選んで入れる。
+4. https://script.google.com で「新しいプロジェクト」を作り、`gas/Login.gs` の中身を貼って保存する。「プロジェクトの設定」→「スクリプト プロパティ」に `CLIENT_ID`(2. の Client ID)と `CLIENT_SECRET`(2. の Client secret)を足す。
+5. 「デプロイ」→「新しいデプロイ」→「ウェブアプリ」。実行するユーザーは**自分**、アクセスできるユーザーは**全員**で公開する。
+6. このリポジトリの `config.js` の `githubClientId` に 2. の Client ID、`loginEndpoint` に 5. の URL を貼ってコミットする。
+
+Client secret を替えるときは、App のページで作り直し、4. のスクリプト プロパティを書き換える。
 
 ## アップロードページ(合言葉版)
 

@@ -44,6 +44,7 @@ input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline
 .check input{width:16px;height:16px;accent-color:var(--accent);margin:0}
 .note{margin:0;font-size:13px;color:var(--muted)}
 .status{font-size:14px}
+.status:empty{display:none}
 .status.ok{color:var(--accent);font-weight:700}
 .status.err{color:var(--minus);font-weight:700}
 details.help>summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--accent);display:inline-block;border-bottom:1px dashed var(--accent);list-style:none}
@@ -93,23 +94,14 @@ footer p{margin:0}
 </header>
 
 <section class="panel" id="auth">
-  <h2>1. GitHub のトークン</h2>
+  <h2>1. GitHub でログイン</h2>
   <div class="row">
-    <input type="password" id="token" placeholder="github_pat_…" autocomplete="off" spellcheck="false" aria-label="GitHub のトークン">
-    <button class="btn" id="token-go" type="button">使う</button>
-    <button class="btn sub" id="token-forget" type="button" hidden>忘れる</button>
+    <button class="btn" id="login" type="button">GitHubでログイン</button>
+    <span class="status" id="who" hidden></span>
+    <button class="btn sub" id="logout" type="button" hidden>ログアウト</button>
   </div>
-  <label class="check"><input type="checkbox" id="token-keep" checked> このブラウザに覚える(共用のパソコンでは外す)</label>
   <p class="status" id="auth-status" role="status"></p>
-  <details class="help">
-    <summary>トークンの作り方</summary>
-    <ol>
-      <li>GitHub 右上のアイコン →「Settings」→ 左下「Developer settings」→「Personal access tokens」→「Fine-grained tokens」→「Generate new token」。</li>
-      <li>Resource owner は <b>monoqlo-league</b>。Repository access は「Only select repositories」で <b>monoqlo-data</b> と <b>event-data</b> を選ぶ。</li>
-      <li>Permissions の Repository permissions で <b>Contents</b> を「Read and write」にする(ほかは触らない)。</li>
-      <li>作ったトークン(<code>github_pat_</code> で始まる)を上の欄に貼る。トークンはこのブラウザの中にだけ置き、GitHub 以外には送らない。</li>
-    </ol>
-  </details>
+  <p class="note">GitHub のログイン画面に移り、許可すると戻ってくる。上げられるのは、monoqlo-data と event-data に書き込める GitHub アカウントだけ。ログインは8時間ほどで切れるので、そのときはもう一度押す。コミットは、ログインした人の名前で残る。</p>
 </section>
 
 <section class="drop off" id="drop" aria-label="ファイルの置き場">
@@ -131,18 +123,24 @@ footer p{margin:0}
 </div>
 
 <footer>
+  <p>合言葉で上げる版は <a href="upload2.html">upload2.html</a>。</p>
   <p>対局記録は、書き出したファイルをそのまま上げる(中身は変えない)。行き先は中身から決める: 対局者が全員チーム戦の大会マスターにいればチーム戦、そうでなければ個人戦。</p>
   <p>詳細成績は、ゲームIDで対局記録と照らし、その対局が入っている月・リーグの <code>summary</code> に合体する。すでにある対局は重ねない。中身が違う同じ対局は、元の方を残して知らせる。</p>
   <p>上げると、各リポジトリの自動処理(一覧の作り直し・点検・Discord への通知・分割CSVの追加)がいつもどおり動く。</p>
 </footer>
 </div>
 
+<script src="config.js"></script>
 <script>
 (() => {
 "use strict";
 const OWNER = "monoqlo-league";
 const REPO = { personal: "monoqlo-data", team: "event-data" };
-const TOKEN_KEY = "monoqlo-upload-token";
+const TOKEN_KEY = "monoqlo-upload-login";     // {token, expires, login}
+const STATE_KEY = "monoqlo-upload-state";
+const CFG = window.SPLITDATA_CONFIG || {};
+const CLIENT_ID = (CFG.githubClientId || "").trim();
+const LOGIN_ENDPOINT = (CFG.loginEndpoint || "").trim();
 const REC_HEAD = ["開始時間","終了時間","非表示状態","1位プレイヤー名","1位PT","1位最終点数","2位プレイヤー名","2位PT","2位最終点数","3位プレイヤー名","3位PT","3位最終点数","4位プレイヤー名","4位PT","4位最終点数","牌譜リンク","備考"];
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -549,7 +547,7 @@ async function upload() {
       const c = await commit(repo, items, `${names} を更新(アップロードページから)`);
       for (const p of mine) { p.done = true; p.result = { ok: true, text: "上げた(コミットを見る)", url: c.html_url }; }
     } catch (e) {
-      for (const p of mine) p.result = { ok: false, text: "上げられなかった: " + e.message + (e.status === 403 || e.status === 404 ? "(トークンにこのリポジトリの書き込み権限が無い)" : "") };
+      for (const p of mine) p.result = { ok: false, text: "上げられなかった: " + e.message + (e.status === 401 ? "(ログインが切れた。もう一度ログインする)" : e.status === 403 || e.status === 404 ? "(このアカウントか GitHub App に、このリポジトリへの書き込み権限が無い)" : "") };
     }
   }
   files.clear();
@@ -561,32 +559,62 @@ async function upload() {
   $("bar-text").textContent = left ? "上げられなかったものがある" : "上げた。1〜2分でランキングに出る。";
 }
 
-/* ---------- トークン ---------- */
+/* ---------- GitHub でログイン ---------- */
 function setAuth(text, cls) { $("auth-status").textContent = text; $("auth-status").className = "status" + (cls ? " " + cls : ""); }
-async function useToken(t) {
-  TOKEN = t.trim(); if (!TOKEN) return;
+function saveLogin(v) { try { if (v) localStorage.setItem(TOKEN_KEY, JSON.stringify(v)); else localStorage.removeItem(TOKEN_KEY); } catch (_) {} }
+function loadLogin() { try { return JSON.parse(localStorage.getItem(TOKEN_KEY) || "null"); } catch (_) { return null; } }
+function showLoggedOut(msg, cls) {
+  TOKEN = ""; $("login").hidden = false; $("who").hidden = true; $("logout").hidden = true; $("drop").classList.add("off");
+  setAuth(msg || "", cls);
+}
+async function useToken(t, login) {
+  TOKEN = t;
   setAuth("確かめている…");
   try {
+    const me = login || (await gh("/user")).login;
     const [a, b] = await Promise.all([gh(`/repos/${OWNER}/${REPO.personal}`), gh(`/repos/${OWNER}/${REPO.team}`)]);
     const lack = [a, b].filter((r) => !(r.permissions && r.permissions.push)).map((r) => r.name);
-    if (lack.length) { setAuth(`${lack.join("・")} に書き込む権限が無い。トークンの設定を確かめる。`, "err"); return; }
-    try { if ($("token-keep").checked) localStorage.setItem(TOKEN_KEY, TOKEN); else localStorage.removeItem(TOKEN_KEY); } catch (_) {}
-    setAuth("使える(monoqlo-data・event-data に書き込める)。", "ok");
-    $("token").value = ""; $("token").placeholder = "設定済み"; $("token-forget").hidden = false;
+    $("login").hidden = true; $("who").hidden = false; $("logout").hidden = false;
+    $("who").textContent = me + " でログイン中";
+    if (lack.length) { setAuth(`${lack.join("・")} に書き込む権限が無いアカウント。管理者のアカウントでログインし直す。`, "err"); return; }
+    setAuth("");
     $("drop").classList.remove("off");
     store.ready = loadStore();
     await store.ready;
+    return me;
   } catch (e) {
-    setAuth(e.status === 401 ? "トークンが違うか、期限が切れている。" : e.status === 404 ? "monoqlo-league のリポジトリが見えない。トークンの Resource owner と Repository access を確かめる。" : "確かめられなかった: " + e.message, "err");
-    TOKEN = "";
+    saveLogin(null);
+    showLoggedOut(e.status === 401 ? "ログインが切れた。もう一度ログインする。" : e.status === 404 ? "monoqlo-league のリポジトリが見えない。GitHub App が monoqlo-data・event-data に入っているか確かめる。" : "確かめられなかった: " + e.message, "err");
   }
 }
-$("token-go").addEventListener("click", () => useToken($("token").value));
-$("token").addEventListener("keydown", (e) => { if (e.key === "Enter") useToken($("token").value); });
-$("token-forget").addEventListener("click", () => {
-  try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
-  TOKEN = ""; $("token-forget").hidden = true; $("token").placeholder = "github_pat_…"; $("drop").classList.add("off"); setAuth("忘れた。");
+$("login").addEventListener("click", () => {
+  if (!CLIENT_ID || !LOGIN_ENDPOINT) { setAuth("ログインの設定(config.js の githubClientId・loginEndpoint)がまだ無い。README の手順で設定する。", "err"); return; }
+  const state = [...crypto.getRandomValues(new Uint8Array(16))].map((x) => x.toString(16).padStart(2, "0")).join("");
+  try { sessionStorage.setItem(STATE_KEY, state); } catch (_) {}
+  const back = location.origin + location.pathname;
+  location.href = "https://github.com/login/oauth/authorize?" + new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: back, state }).toString();
 });
+$("logout").addEventListener("click", () => { saveLogin(null); showLoggedOut("ログアウトした。"); });
+
+/* GitHub から戻ってきたとき(?code=…&state=…)は、コードをトークンに替える */
+async function finishLogin() {
+  const q = new URLSearchParams(location.search), code = q.get("code"), state = q.get("state"), err = q.get("error");
+  if (!code && !err) return false;
+  history.replaceState(null, "", location.pathname);
+  let want = null; try { want = sessionStorage.getItem(STATE_KEY); sessionStorage.removeItem(STATE_KEY); } catch (_) {}
+  if (err) { showLoggedOut("ログインを取りやめた。", "err"); return true; }
+  if (!want || want !== state) { showLoggedOut("ログインの確認が合わない。もう一度ログインする。", "err"); return true; }
+  setAuth("ログインしている…(数秒かかる)");
+  try {
+    const res = await fetch(LOGIN_ENDPOINT, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ code }), redirect: "follow" });
+    const r = await res.json();
+    if (!r.ok) { showLoggedOut("ログインできなかった: " + (r.error === "not-configured" ? "中継に GitHub App の設定が無い。" : r.error + (r.detail ? " " + r.detail : "")), "err"); return true; }
+    const v = { token: r.token, expires: r.expiresIn ? Date.now() + r.expiresIn * 1000 : null };
+    const me = await useToken(v.token);
+    if (me) { v.login = me; saveLogin(v); }
+  } catch (e) { showLoggedOut("ログインできなかった: " + e.message, "err"); }
+  return true;
+}
 
 /* ---------- ファイルの受け取り(選ぶ・放り込む) ---------- */
 $("pick").addEventListener("click", () => $("file").click());
@@ -597,7 +625,7 @@ window.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; docu
 window.addEventListener("dragover", (e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = TOKEN ? "copy" : "none"; });
 window.addEventListener("drop", (e) => {   // 画面のどこに落としても受け取る
   e.preventDefault(); depth = 0; document.body.classList.remove("dragging"); $("drop").classList.remove("over");
-  if (!TOKEN) { setAuth("先にトークンを入れる。", "err"); return; }
+  if (!TOKEN) { setAuth("先にログインする。", "err"); return; }
   takeFiles([...(e.dataTransfer ? e.dataTransfer.files : [])].filter((f) => /\.csv$/i.test(f.name) || f.type === "text/csv"));
 });
 $("drop").addEventListener("dragover", () => $("drop").classList.add("over"));
@@ -605,7 +633,12 @@ $("drop").addEventListener("dragleave", () => $("drop").classList.remove("over")
 $("clear").addEventListener("click", () => { plans = []; pendingSummaries = []; render(); });
 $("upload").addEventListener("click", upload);
 
-try { const saved = localStorage.getItem(TOKEN_KEY); if (saved) useToken(saved); } catch (_) {}
+(async () => {
+  if (await finishLogin()) return;
+  const v = loadLogin();
+  if (v && v.token && (!v.expires || v.expires > Date.now() + 60000)) useToken(v.token, v.login);
+  else { if (v) saveLogin(null); showLoggedOut(v ? "ログインが切れた。もう一度ログインする。" : ""); }
+})();
 })();
 </script>
 </body>
