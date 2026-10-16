@@ -706,7 +706,10 @@ footer p{margin:0}
         if (!data.ok && data.error === "invalid") {
           state.recording.delete(name);
           state.unrecorded.set(name, own);
-          say(entry, "ダウンロードはした。この名前は記録できないので、名前を直してから「記録を送り直す」を押す。", "err");
+          // 名前が空でなければ、記録先がファイル名を受け付けなかった(記録先のスクリプトが古い)。
+          say(entry, own
+            ? "ダウンロードはした。記録先がこのファイルをまだ受け付けていないため、記録できなかった(記録先のスクリプトの更新待ち)。少し待って「記録を送り直す」を押す。"
+            : "ダウンロードはした。この名前は記録できないので、名前を直してから「記録を送り直す」を押す。", "err");
           paintButton(entry);
           return;
         }
