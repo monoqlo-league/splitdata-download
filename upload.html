@@ -221,18 +221,27 @@ async function gh(path, opt = {}) {
 }
 const listDir = async (repo, dir) => (await gh(`/repos/${OWNER}/${repo}/contents/${dir}`, { allow404: true })) || [];
 
-/* 読んだファイル(repo:path → {text, rows})。書き込んだら差し替える */
+/* 読んだファイル(repo:path → {sha, p})。置き場の一覧の sha が変わったものだけ読み直す */
 const files = new Map();
+const shas = new Map();   // repo:path → 置き場の一覧にあった sha
+/* いくつも並べて読む(同時に N 本まで) */
+async function pool(list, fn, n = 6) {
+  const out = new Array(list.length); let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, list.length) }, async () => { while (i < list.length) { const j = i++; out[j] = await fn(list[j]); } }));
+  return out;
+}
 async function readFile(repo, path) {
-  const key = repo + ":" + path;
-  if (files.has(key)) return files.get(key);
+  const key = repo + ":" + path, sha = shas.get(key) || "";
+  const hit = files.get(key);
+  if (hit && hit.sha === sha) return hit.p;
   const p = (async () => {
     const buf = await gh(`/repos/${OWNER}/${repo}/contents/${encodeURI(path)}`, { raw: true, allow404: true });
     if (!buf) return null;
     const text = new TextDecoder("utf-8").decode(buf);
     return { text, rows: parseCSV(text) };
   })();
-  files.set(key, p);
+  p.catch(() => { if (files.get(key) && files.get(key).p === p) files.delete(key); });
+  files.set(key, { sha, p });
   return p;
 }
 
@@ -249,6 +258,9 @@ function recGames(rows) {
 }
 async function loadStore() {
   const [pRoot, pSum, eRoot, eSum] = await Promise.all([listDir(REPO.personal, ""), listDir(REPO.personal, "summary"), listDir(REPO.team, ""), listDir(REPO.team, "summary")]);
+  shas.clear();
+  for (const [repo, dir, list] of [[REPO.personal, "", pRoot], [REPO.personal, "summary/", pSum], [REPO.team, "", eRoot], [REPO.team, "summary/", eSum]])
+    for (const f of list) if (f.type === "file") shas.set(repo + ":" + dir + f.name, f.sha);
   store.months = pRoot.map((f) => /^(\d{6})\.csv$/.exec(f.name)).filter(Boolean).map((m) => m[1]).sort();
   store.summaries = new Set([...pSum.map((f) => REPO.personal + ":summary/" + f.name), ...eSum.map((f) => REPO.team + ":summary/" + f.name)]);
   const ev = new Map();
@@ -259,6 +271,8 @@ async function loadStore() {
     ev.set(m[1], e);
   }
   store.events = [...ev.values()].filter((e) => e.master).sort((a, b) => a.id.localeCompare(b.id));
+  // 大会マスター・スケジュールはまとめて先に読む
+  await pool(store.events.flatMap((e) => [e.id + "-master.csv", ...(e.schedule ? [e.id + "-schedule.csv"] : [])]), (f) => readFile(REPO.team, f));
   // 大会ごとに、名簿・リーグ構成・各リーグの対局数を読む
   for (const e of store.events) {
     const mrows = (await readFile(REPO.team, e.id + "-master.csv")).rows, h = mrows[0];
@@ -290,6 +304,10 @@ async function loadStore() {
 }
 const monthPath = (ym) => ym + ".csv";
 const gamesPath = (eid, k) => `${eid}-games${k}.csv`;
+/* 置いてある対局記録をぜんぶ並べて読んでおく(読んだものは覚えておくので2回目からは速い) */
+function warmRecords() {
+  return pool([...store.months.map((ym) => [REPO.personal, monthPath(ym)]), ...store.events.flatMap((e) => e.games.map((k) => [REPO.team, gamesPath(e.id, k)]))], ([r, f]) => readFile(r, f));
+}
 async function recordLinks(repo, path) {
   const f = await readFile(repo, path);
   return f ? recGames(f.rows) : null;
@@ -315,6 +333,7 @@ async function planRecord(name, buf, text, rows) {
   // 取り違えの守り: 選んだ種類と逆の置き場にある対局が入っていたら上げない(種類を選び間違えたか、ファイルを取り違えた)
   const links = new Set(games.map((g) => g.link));
   const pHit = [], tHit = [];
+  await warmRecords();
   for (const ym of store.months) {
     const ex = await recordLinks(REPO.personal, monthPath(ym));
     const c = ex ? ex.filter((g) => links.has(g.link)).length : 0;
@@ -507,6 +526,7 @@ async function planSummaries() {
     for (const g of games) if (!g.hidden) { if (!where.has(g.link)) where.set(g.link, new Set()); where.get(g.link).add(key); }
   };
   const recPlans = plans.filter((p) => p.kind === "record" && p.include);
+  await warmRecords();
   if (KIND === "personal") for (const ym of store.months) {
     const pl = recPlans.find((p) => p.side === "personal" && p.path === monthPath(ym));
     addTarget(REPO.personal, monthPath(ym), pl ? pl.games : await recordLinks(REPO.personal, monthPath(ym)), `summary/${ym}-summary.csv`, `個人 ${ym.slice(0, 4)}年${Number(ym.slice(4))}月`);
@@ -717,11 +737,10 @@ async function commit(repo, items, message) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const ref = await gh(`/repos/${OWNER}/${repo}/git/ref/heads/main`);
     const base = await gh(`/repos/${OWNER}/${repo}/git/commits/${ref.object.sha}`);
-    const tree = [];
-    for (const it of items) {
+    const tree = await Promise.all(items.map(async (it) => {
       const blob = await gh(`/repos/${OWNER}/${repo}/git/blobs`, { method: "POST", body: { content: b64(it.bytes), encoding: "base64" } });
-      tree.push({ path: it.path, mode: "100644", type: "blob", sha: blob.sha });
-    }
+      return { path: it.path, mode: "100644", type: "blob", sha: blob.sha };
+    }));
     const nt = await gh(`/repos/${OWNER}/${repo}/git/trees`, { method: "POST", body: { base_tree: base.tree.sha, tree } });
     const c = await gh(`/repos/${OWNER}/${repo}/git/commits`, { method: "POST", body: { message, tree: nt.sha, parents: [ref.object.sha] } });
     try {
@@ -738,8 +757,7 @@ async function upload() {
   if (!todo.length) return;
   $("upload").disabled = true; $("clear").disabled = true;
   $("bar-text").textContent = "上げている…";
-  // 詳細成績は、置いてある最新の版から作り直してから上げる(ほかの人の更新を消さないため)
-  files.clear();
+  // 詳細成績は、置いてある最新の版から作り直してから上げる(ほかの人の更新を消さないため。変わったファイルだけ読み直す)
   try { await loadStore(); if (KIND === "team" && EVENT) { const ne = store.events.find((e) => e.id === EVENT.id); if (ne) { for (const p of plans) if (p.event === EVENT) p.event = ne; EVENT = ne; } } await planSummaries(); }
   catch (e) { $("bar-text").textContent = "置き場を読み直せなかった: " + e.message; $("clear").disabled = false; render(); return; }
   const now = plans.filter((p) => p.kind !== "note" && p.include && !p.done);
@@ -755,7 +773,6 @@ async function upload() {
       for (const p of mine) p.result = { ok: false, text: "上げられなかった: " + e.message + (e.status === 401 ? "(ログインが切れた。もう一度ログインする)" : e.status === 403 || e.status === 404 ? "(このアカウントか GitHub App に、このリポジトリへの書き込み権限が無い)" : "") };
     }
   }
-  files.clear();
   store.ready = loadStore().then(() => { if (KIND === "team") EVENT = store.events.find((e) => e.id === (EVENT && EVENT.id)) || EVENT; }).catch(() => {});
   if (!plans.some((p) => p.kind === "summary" && !p.done && p.include)) pendingSummaries = [];
   $("clear").disabled = false;
@@ -788,6 +805,7 @@ async function useToken(t, login) {
     store.ready = loadStore();
     await store.ready;
     setAuth("");
+    warmRecords().catch(() => {});   // 対局記録は裏で先に読んでおく
     document.querySelectorAll('input[name=kind]').forEach((r) => { r.disabled = false; });
     fillEvents();
     refreshDrop();
