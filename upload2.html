@@ -311,9 +311,41 @@ async function planRecord(name, buf, text, rows) {
     if (cnt.size > 1) addMsg(p, "i", "開始時間の月: " + [...cnt].sort().map(([m, n]) => `${m.slice(0, 4)}/${m.slice(4)} ${n}対局`).join("、") + "。いちばん多い月にした。");
     if (!p.month) { addMsg(p, "e", "開始時間から月を決められない。"); p.include = false; }
   }
+  await checkNameAndMix(p, name);
   p.baseMsgs = p.msgs.slice();
   plans.push(p);
   await refreshRecordPlan(p);
+}
+
+/* ファイル名と中身の食い違い、個人戦とチーム戦の混ざりを調べる。
+   行き先は中身で決めるが、名前が逆の種類を指していたら、取り違えの恐れがあるので上げない */
+const NAME_PERSONAL = /^(\d{6})(?:\s*\(\d+\))?\.csv$/i;              // 202610.csv(ダウンロードで付く「 (1)」も許す)
+const NAME_TEAM = /^(\d{8})-games(\d+)(?:\s*\(\d+\))?\.csv$/i;      // 20260901-games2.csv
+async function checkNameAndMix(p, name) {
+  const block = (text) => { addMsg(p, "e", text); p.blocked = true; p.include = false; };
+  const mp = NAME_PERSONAL.exec(name), mt = NAME_TEAM.exec(name);
+  if (p.side === "team" && mp) block(`ファイル名は個人戦(${mp[1]})だが、中身はチーム戦(${p.event.name})の対局記録。取り違えの恐れがあるので上げない。正しいファイルか確かめ、名前を ${p.event.id}-gamesN.csv に直すか、名前を変えずに書き出し直したファイルを入れる。`);
+  if (p.side === "personal" && mt) block(`ファイル名はチーム戦(${mt[1]}-games${mt[2]})だが、中身は個人戦の対局記録(対局者がチーム戦の名簿にそろっていない)。取り違えの恐れがあるので上げない。`);
+  if (p.side === "personal" && mp && p.month && mp[1] !== p.month) addMsg(p, "w", `ファイル名の月(${mp[1]})と、対局の月(${p.month})が違う。行き先は対局の月にした。`);
+  if (p.side === "team" && mt && (mt[1] !== p.event.id || Number(mt[2]) !== p.league)) addMsg(p, "w", `ファイル名(${mt[1]}-games${mt[2]})と、中身から決めた行き先(${p.event.id}-games${p.league})が違う。リーグを確かめる。`);
+  // 中身の混ざり: 置いてある「もう一方の種類」の対局記録と、同じ対局が入っていないか
+  const links = new Set(p.games.map((g) => g.link));
+  const hits = [];
+  if (p.side === "personal") {
+    for (const e of store.events) for (const n of e.games) {
+      const ex = await recordLinks(REPO.team, gamesPath(e.id, n));
+      const c = ex ? ex.filter((g) => links.has(g.link)).length : 0;
+      if (c) hits.push(`${gamesPath(e.id, n)} に ${c} 対局`);
+    }
+    if (hits.length) block(`チーム戦の対局が入っている(${hits.join("、")})。個人戦の対局記録には入れない。チーム戦のファイルを取り違えていないか確かめる。`);
+  } else {
+    for (const ym of store.months) {
+      const ex = await recordLinks(REPO.personal, monthPath(ym));
+      const c = ex ? ex.filter((g) => links.has(g.link)).length : 0;
+      if (c) hits.push(`${monthPath(ym)} に ${c} 対局`);
+    }
+    if (hits.length) block(`個人戦の対局が入っている(${hits.join("、")})。チーム戦の対局記録には入れない。`);
+  }
 }
 
 /* 行き先が決まった(変わった)対局記録の案を、置いてあるものと比べる */
@@ -342,7 +374,7 @@ async function refreshRecordPlan(p) {
     const later = store.months.filter((m) => m > p.month);
     if (later.length) addMsg(p, "i", `${p.month} より後の月(${later.join("、")})がもう置いてある。`);
   }
-  p.include = p.include && !p.needOk && !p.same;
+  p.include = p.include && !p.needOk && !p.same && !p.blocked;
 }
 
 /* 詳細成績: 届いた分をまとめて、行き先(月・リーグ)ごとに合体し直す */
@@ -496,18 +528,18 @@ function render() {
         if (p.side === "personal") {
           const lab = el("label", "pickm"); lab.append("月 ");
           const inp = el("input"); inp.type = "text"; inp.value = p.month; inp.size = 7; inp.className = "mono"; inp.setAttribute("aria-label", "月(YYYYMM)");
-          inp.addEventListener("change", async () => { if (!/^\d{6}$/.test(inp.value)) { inp.value = p.month; return; } p.month = inp.value; p.include = true; await refreshRecordPlan(p); await planSummaries(); render(); });
+          inp.addEventListener("change", async () => { if (!/^\d{6}$/.test(inp.value)) { inp.value = p.month; return; } p.month = inp.value; p.include = !p.blocked; await refreshRecordPlan(p); await planSummaries(); render(); });
           lab.append(inp); ctl.append(lab);
         } else {
           const sel = el("select"); sel.setAttribute("aria-label", "リーグ");
           p.event.leagues.forEach((L, i) => { const o = el("option", "", `${i + 1}: ${L}`); o.value = i + 1; if (i + 1 === p.league) o.selected = true; sel.append(o); });
-          sel.addEventListener("change", async () => { p.league = Number(sel.value); p.include = true; await refreshRecordPlan(p); await planSummaries(); render(); });
+          sel.addEventListener("change", async () => { p.league = Number(sel.value); p.include = !p.blocked; await refreshRecordPlan(p); await planSummaries(); render(); });
           const lab = el("label", "check"); lab.append(`${p.event.name} の`, sel); ctl.append(lab);
         }
       }
-      const lab = el("label", "check"); const cb = el("input"); cb.type = "checkbox"; cb.checked = p.include;
+      const lab = el("label", "check"); const cb = el("input"); cb.type = "checkbox"; cb.checked = p.include; cb.disabled = !!p.blocked;
       cb.addEventListener("change", () => { p.include = cb.checked; renderBar(); });
-      lab.append(cb, p.needOk ? "それでも上げる" : "上げる"); ctl.append(lab);
+      lab.append(cb, p.blocked ? "上げられない" : p.needOk ? "それでも上げる" : "上げる"); ctl.append(lab);
       card.append(ctl);
     }
     if (p.result) { const r = el("div", "result " + (p.result.ok ? "ok" : "err")); if (p.result.url) { const a = el("a", "", p.result.text); a.href = p.result.url; a.target = "_blank"; a.rel = "noopener"; r.append(a); } else r.textContent = p.result.text; card.append(r); }
