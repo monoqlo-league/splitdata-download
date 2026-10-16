@@ -6,7 +6,7 @@
 /** @OnlyCurrentDoc */
 
 const SHEET_NAME = 'DL記録';
-const FILE_PATTERN = /^\d{6}-\d{2,3}\.csv$/;
+const FILE_PATTERN = /^(\d{6}-\d{2,3}|\d{8}-games\d+-\d{8})\.csv$/;   // 個人戦 202610-01.csv / チーム戦 20260901-games2-20261014.csv
 const NAME_MAX = 30;
 
 // ページを開いたとき: これまでの記録をすべて返す。

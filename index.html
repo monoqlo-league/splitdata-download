@@ -70,6 +70,12 @@ h1{font-size:clamp(26px,5vw,36px);font-weight:900;line-height:1.25;margin:0;text
 .mcount{font-size:13px;color:var(--muted);text-align:right;white-space:nowrap}
 .mcount b{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:15px;color:var(--ink)}
 .month.done .mcount b{color:var(--accent)}
+/* 個人戦・チーム戦の見出しと、チーム戦の行のリーグ・開催日 */
+.kind{margin:8px 0 -4px;font-size:15px;font-weight:900;display:flex;align-items:baseline;gap:10px}
+.kind small{font-size:12px;font-weight:500;color:var(--muted)}
+.kind:first-child{margin-top:0}
+.file.ev{white-space:normal;overflow-wrap:anywhere;font-size:13px;line-height:1.35}
+.file small{display:block;font-family:"Zen Kaku Gothic New",sans-serif;font-weight:500;font-size:12px;color:var(--muted);white-space:normal}
 /* 牌を並べた山のように、1ファイルを1枚で表す。取得済みの枚が塗られる */
 .strip{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:3px}
 .strip i{width:9px;height:13px;border-radius:2px;background:var(--line)}
@@ -147,7 +153,7 @@ footer p{margin:0}
 <header>
   <div class="eyebrow">MONOQLO麻雀部</div>
   <h1>分割CSVのダウンロード</h1>
-  <p class="lead">対局記録を10対局ずつに分けたCSV。名前を入れて「ダウンロード」を押すと、誰がいつ取得したかが記録され、この一覧に出る。</p>
+  <p class="lead">対局記録を分けたCSV。個人戦は10対局ずつ、チーム戦は開催日ごと(その日の対局がすべて終わったら出る)。名前を入れて「ダウンロード」を押すと、誰がいつ取得したかが記録され、この一覧に出る。</p>
   <div class="kit">
     <a class="kitbtn" id="kit-zip" href="downloads/majsoul-paifu-list.zip" download="majsoul-paifu-list.zip">拡張機能をダウンロード(ZIP)</a>
     <a class="link" id="kit-manual" href="downloads/majsoul-paifu-list-manual.pdf" target="_blank" rel="noopener">使い方マニュアル(PDF)</a>
@@ -291,6 +297,13 @@ footer p{margin:0}
     if (from === to) return `${a.day} ${a.time}`;
     return a.day === b.day ? `${a.day} ${a.time} 〜 ${b.time}` : `${a.day} ${a.time} 〜 ${b.day} ${b.time}`;
   }
+  const WEEK = "日月火水木金土";
+  function dayLabel(day) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day || "");
+    if (!m) return "";
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return `${Number(m[2])}/${Number(m[3])}(${WEEK[d.getDay()]})`;
+  }
   function monthLabel(month) {
     return `${month.slice(0, 4)}年${Number(month.slice(4))}月`;
   }
@@ -299,10 +312,23 @@ footer p{margin:0}
   function build(manifest) {
     const host = $("months");
     host.textContent = "";
-    for (const m of manifest.months) {
+    // チーム戦(大会ごと)を先に、個人戦(月ごと)を後に出す
+    const events = Array.isArray(manifest.events) ? manifest.events : [];
+    const groups = [
+      ...events.map((e) => ({ kind: "event", key: e.key, label: e.title, files: e.files })),
+      ...(manifest.months || []).map((m) => ({ kind: "month", key: m.month, label: monthLabel(m.month), files: m.files })),
+    ];
+    let lastKind = null;
+    for (const m of groups) {
+      if (events.length && m.kind !== lastKind) {
+        const h = el("h2", "kind", m.kind === "event" ? "チーム戦" : "個人戦");
+        h.append(el("small", "", m.kind === "event" ? "開催日ごと" : "10対局ずつ"));
+        host.append(h);
+        lastKind = m.kind;
+      }
       const box = el("details", "month");
       const summary = el("summary");
-      summary.append(el("span", "mname", monthLabel(m.month)), el("span"));
+      summary.append(el("span", "mname", m.label), el("span"));
       const count = el("span", "mcount");
       const strip = el("span", "strip");
       strip.setAttribute("aria-hidden", "true");
@@ -330,8 +356,10 @@ footer p{margin:0}
         const msg = el("p", "msg");
         msg.setAttribute("role", "status");
         act.append(input, button);
+        const fileCell = el("div", m.kind === "event" ? "file ev" : "file", file.name.replace(/-games/, "-\u200bgames"));
+        if (m.kind === "event") fileCell.append(el("small", "", `${file.league || ""} ${dayLabel(file.day)}`.trim()));
         row.append(
-          el("div", "file", file.name),
+          fileCell,
           el("div", "games", String(file.games)),
           el("div", "span", formatSpan(file.from, file.to)),
           who, act, msg,
@@ -340,12 +368,12 @@ footer p{margin:0}
         const tile = el("i");
         strip.append(tile);
 
-        const entry = { file, month: m.month, row, who, input, button, msg, tile };
+        const entry = { file, month: m.key, row, who, input, button, msg, tile };
         state.rows.set(file.name, entry);
         input.addEventListener("input", () => onNameInput(entry));
         button.addEventListener("click", () => take(entry));
       }
-      const empty = el("p", "empty", "この月は、すべて誰かが取得している。");
+      const empty = el("p", "empty", m.kind === "event" ? "この大会は、すべて誰かが取得している。" : "この月は、すべて誰かが取得している。");
       empty.hidden = true;
       rows.append(empty);
       box.append(rows);
