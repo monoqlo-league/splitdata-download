@@ -59,6 +59,10 @@ details.help ol{margin:8px 0 0;padding-left:1.4em;font-size:13px;display:grid;ga
 body.dragging .drop:not(.off){border-color:var(--accent)}
 
 .card{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px;display:grid;gap:8px}
+.card{position:relative;padding-right:44px}
+.card .close{all:unset;box-sizing:border-box;position:absolute;top:8px;right:8px;width:28px;height:28px;display:grid;place-items:center;border-radius:6px;color:var(--muted);font-size:15px;cursor:pointer}
+.card .close:hover{background:var(--bg);color:var(--ink)}
+.card .close:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .card.warn{border-left-color:var(--warn)}
 .card.bad{border-left-color:var(--minus)}
 .card.done{border-left-color:var(--line);opacity:.8}
@@ -153,6 +157,7 @@ const OWNER = "monoqlo-league";
 const REPO = { personal: "monoqlo-data", team: "event-data" };
 const TOKEN_KEY = "monoqlo-upload-login";     // {token, expires, login}
 const STATE_KEY = "monoqlo-upload-state";
+const RANKING = { "monoqlo-data": "https://monoqlo-league.github.io/ranking/", "event-data": "https://monoqlo-league.github.io/event-ranking/" };   // 上げたあとに開くランキング
 const CFG = window.SPLITDATA_CONFIG || {};
 const CLIENT_ID = (CFG.githubClientId || "").trim();
 const LOGIN_ENDPOINT = (CFG.loginEndpoint || "").trim();
@@ -280,6 +285,8 @@ async function recordLinks(repo, path) {
 /* ---------- 取り込んだファイル → 書き込みの案 ---------- */
 let plans = [];       // {kind:"record"|"summary", side, repo, path, ...}
 let pendingSummaries = [];   // 届いた詳細成績(合体はまとめて作り直す)
+const dismissed = new Set();      // ✕で取り消した詳細成績の行き先(repo:path、使わないものの欄は "note")
+
 
 function addMsg(p, cls, text) { p.msgs.push([cls, text]); }
 
@@ -404,6 +411,7 @@ async function planSummaries() {
   }
   const H = header, hi = (n) => H.indexOf(n), iv = (r, n) => Number(r[hi(n)] || 0);
   for (const [key, add] of per) {
+    if (dismissed.has(key)) continue;   // ✕で取り消した行き先
     const t = targets.get(key);
     const p = { fromSum: true, kind: "summary", side: t.repo === REPO.team ? "team" : "personal", repo: t.repo, path: t.sumPath, label: t.label, msgs: [], include: true, from: [...new Set([...add.keys()].map((id) => froms.get(id)))] };
     const exFile = store.summaries.has(key) ? await readFile(t.repo, t.sumPath) : null;
@@ -445,7 +453,7 @@ async function planSummaries() {
     if (not4 || cols) p.include = false;
     plans.push(p);
   }
-  if (nowhere.length || loose.length) {
+  if ((nowhere.length || loose.length) && !dismissed.has("note")) {
     const p = { fromSum: true, kind: "note", msgs: [], include: false, from: [...new Set(pendingSummaries.map((s) => s.name))] };
     if (nowhere.length) addMsg(p, "w", `${nowhere.length} 対局は、${KIND === "team" ? "この大会の" : "個人戦の"}どの対局記録にも無い(非表示を含む)ので使わない。種類の選び間違いか、まだ対局記録を上げていない対局: ${nowhere.slice(0, 3).map((x) => x.slice(0, 15) + "…").join("、")}${nowhere.length > 3 ? " ほか" : ""}`);
     for (const m of loose) addMsg(p, "w", m);
@@ -475,6 +483,16 @@ async function takeFiles(list) {
   render();
 }
 
+/* ---------- 1件ずつ取り消す(✕) ---------- */
+async function dismiss(p) {
+  plans = plans.filter((q) => q !== p);
+  if (!p.done && p.fromSum) dismissed.add(p.kind === "note" ? "note" : p.repo + ":" + p.path);
+  // 対局記録を取り消したら、それをもとにした詳細成績の振り分けも作り直す
+  if (!p.done && p.kind === "record") { try { await planSummaries(); } catch (_) {} }
+  if (!plans.some((q) => q.fromSum && !q.done)) { pendingSummaries = []; dismissed.clear(); }
+  render();
+}
+
 /* ---------- 表示 ---------- */
 function render() {
   const host = $("plans"); host.textContent = "";
@@ -484,6 +502,10 @@ function render() {
   for (const p of plans) {
     const bad = p.msgs.some((m) => m[0] === "e"), warn = p.msgs.some((m) => m[0] === "w");
     const card = el("article", "card" + (p.done ? " done" : bad ? " bad" : warn ? " warn" : ""));
+    const x = el("button", "close", "✕"); x.type = "button";
+    x.title = p.done ? "この欄を消す" : "このファイルを取り消す"; x.setAttribute("aria-label", x.title);
+    x.addEventListener("click", () => dismiss(p));
+    card.append(x);
     const head = el("div", "chead");
     if (p.kind !== "note") {
       head.append(el("span", "tag" + (p.side === "team" ? " team" : ""), (p.side === "team" ? "チーム戦" : "個人戦") + "・" + (p.kind === "record" ? "対局記録" : "詳細成績")));
@@ -573,7 +595,7 @@ async function upload() {
     const names = mine.map((p) => p.path.replace(/^summary\//, "")).join("、");
     try {
       const c = await commit(repo, items, `${names} を更新(アップロードページから)`);
-      for (const p of mine) { p.done = true; p.result = { ok: true, text: "上げた(コミットを見る)", url: c.html_url }; }
+      for (const p of mine) { p.done = true; p.result = { ok: true, text: "上げた", url: RANKING[repo] }; }
     } catch (e) {
       for (const p of mine) p.result = { ok: false, text: "上げられなかった: " + e.message + (e.status === 401 ? "(ログインが切れた。もう一度ログインする)" : e.status === 403 || e.status === 404 ? "(このアカウントか GitHub App に、このリポジトリへの書き込み権限が無い)" : "") };
     }
@@ -665,7 +687,7 @@ function fillEvents() {
 }
 function resetPlans(why) {
   if (plans.some((p) => !p.done) || pendingSummaries.length) {
-    plans = plans.filter((p) => p.done); pendingSummaries = [];
+    plans = plans.filter((p) => p.done); pendingSummaries = []; dismissed.clear();
     $("load-status").textContent = why; $("load-status").className = "status";
     render();
   }
@@ -698,7 +720,7 @@ window.addEventListener("drop", (e) => {   // 画面のどこに落としても�
 });
 $("drop").addEventListener("dragover", () => $("drop").classList.add("over"));
 $("drop").addEventListener("dragleave", () => $("drop").classList.remove("over"));
-$("clear").addEventListener("click", () => { plans = []; pendingSummaries = []; render(); });
+$("clear").addEventListener("click", () => { plans = []; pendingSummaries = []; dismissed.clear(); render(); });
 $("upload").addEventListener("click", upload);
 
 (async () => {
