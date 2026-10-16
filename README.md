@@ -25,7 +25,9 @@ MONOQLO PTランキングの対局記録(monoqlo-data の `YYYYMM.csv`)を10対�
 | `YYYYMM/YYYYMM-連番.csv` | 個人戦の分割したCSV。1ファイル10対局。開始時間の古い順(202608 までは月の最後だけ端数) |
 | `event/大会/大会-gamesN-開催日.csv` | チーム戦の開催日ごとのCSV(例: `event/20260901/20260901-games2-20261014.csv`)。同じフォルダの `info.json` は、ページに出す大会名とリーグ名 |
 | `index.html` | 一覧とダウンロードのページ |
-| `upload.html` | ゲームデータのアップロードページ(管理者用) |
+| `upload.html` | ゲームデータのアップロードページ(管理者用・トークン版) |
+| `upload2.html` | ゲームデータのアップロードページ(管理者用・合言葉版) |
+| `gas/Upload.gs` | 合言葉版の中継スクリプト(Google Apps Script に貼る) |
 | `files.json` | ページが読むファイルの一覧。`tools/build-manifest.js` が作る |
 | `tools/split-new.py` | 対局記録から、まだ入っていない対局を10対局ずつ分割する(自動で動く) |
 | `tools/split-event.py` | チーム戦の対局記録から、対局がそろった開催日の分を1ファイルにする(自動で動く) |
@@ -145,3 +147,28 @@ node tools/build-manifest.js
   - 置いてある行の並びはそのままにして、足す対局を後ろに足す。BOM 付き・改行 CRLF。
   - 4人そろっていない対局・列の数が合わない行があるファイルは上げない。和了数・立直数の内訳の食い違い、内部IDが空の行(回線切れのCPU)は知らせるだけ。
 - 上げるときは、置き場の最新の版を読み直してから、リポジトリごとに1つのコミットにまとめる。各リポジトリの自動処理(一覧の作り直し・点検・Discord への通知・分割CSVの追加)はいつもどおり動く。
+
+## アップロードページ(合言葉版)
+
+ページ: https://monoqlo-league.github.io/splitdata-download/upload2.html
+
+`upload.html` と同じ動き(取り込み・判定・合体・点検)で、認証だけが違う。各自のトークンの代わりに、管理者で共有する**合言葉**を入れる。
+書き込みは Google のスクリプト(`gas/Upload.gs`)が行い、GitHub のトークンはそのスクリプトの設定にだけ置く。ページとリポジトリには鍵を書かない。
+
+- 合言葉を5回まちがえると、10分間受け付けない。
+- 中継が書き込むのは monoqlo-data の `YYYYMM.csv`・`summary/YYYYMM-summary.csv` と、event-data の `YYYYMMXX-gamesN.csv`・`summary/YYYYMMXX-gamesN-summary.csv` だけ。ほかの名前は拒む。
+- 置き場の読み込みは、公開されているファイル(`index.json` と各CSV)を直接読む。ファイル一覧は `index.json` から取るので、上げた直後の1分ほどは新しいファイルが一覧に出ないことがある。
+- コミットの作者は、トークンを作った人になる。
+
+### 最初の設定(1回だけ)
+
+1. GitHub で fine-grained トークンを作る。Resource owner は **monoqlo-league**、Repository access は **monoqlo-data** と **event-data**、Permissions は **Contents を Read and write**(ほかは触らない)。
+2. https://script.google.com で「新しいプロジェクト」を作り、`gas/Upload.gs` の中身をすべて貼って保存する(スプレッドシートには付けない、単独のプロジェクト)。
+3. 左の歯車「プロジェクトの設定」→ いちばん下の「スクリプト プロパティ」→「スクリプト プロパティを追加」で、次の2つを足して保存する。
+   - `GITHUB_TOKEN` … 1. のトークン
+   - `UPLOAD_PASS` … 管理者で共有する合言葉(長めの文がよい)
+4. 右上「デプロイ」→「新しいデプロイ」→ 歯車から「ウェブアプリ」。「次のユーザーとして実行」は**自分**、「アクセスできるユーザー」は**全員**。「デプロイ」を押し、初回はアクセスを承認する(「Google hasn’t verified this app」は「Advanced」→「Go to …(unsafe)」→「Allow」)。
+5. 出た「ウェブアプリのURL」を、このリポジトリの `config.js` の `uploadEndpoint: ""` の `""` の中に貼ってコミットする。
+
+合言葉やトークンを替えるときは、3. のスクリプト プロパティを書き換えるだけでよい(デプロイし直さなくてよい)。`Upload.gs` の中身を直したときは「デプロイを管理」→ 鉛筆 →「新しいバージョン」で更新する(URLは変わらない)。
+

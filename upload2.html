@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ゲームデータのアップロード(合言葉) | MONOQLO麻雀部</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* 色と書体は、ランキングと分割CSVのページに合わせる */
+:root{
+  --bg:#f3f5f2;--surface:#ffffff;--ink:#17201b;--muted:#5d6b63;--line:#dde3dd;
+  --accent:#1d6a4f;--accent-soft:#e2efe8;--minus:#b23a2e;--minus-soft:#f7e6e3;--warn:#8a6100;--warn-soft:#f6efdc;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;
+  --bg:#101512;--surface:#171e1a;--ink:#e6ece8;--muted:#98a69e;--line:#2a332e;
+  --accent:#6cc39c;--accent-soft:#1d2d25;--minus:#f0877a;--minus-soft:#33201d;--warn:#e2bd62;--warn-soft:#2f2a1a;}}
+:root[data-theme="dark"]{color-scheme:dark;
+  --bg:#101512;--surface:#171e1a;--ink:#e6ece8;--muted:#98a69e;--line:#2a332e;
+  --accent:#6cc39c;--accent-soft:#1d2d25;--minus:#f0877a;--minus-soft:#33201d;--warn:#e2bd62;--warn-soft:#2f2a1a;}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",sans-serif;font-size:15px;line-height:1.6;padding:32px 16px 48px}
+.wrap{max-width:860px;margin:0 auto;display:grid;gap:20px}
+header{display:grid;gap:6px}
+.eyebrow{font-size:13px;font-weight:700;letter-spacing:.12em;color:var(--accent)}
+h1{font-size:clamp(26px,5vw,34px);font-weight:900;line-height:1.25;margin:0}
+h2{font-size:16px;font-weight:900;margin:0}
+.lead{margin:2px 0 0;max-width:46em;color:var(--muted)}
+.mono{font-family:"IBM Plex Mono",monospace}
+code{font-family:"IBM Plex Mono",monospace;font-size:13px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:10px}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+input[type=password],input[type=text],select{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
+input[type=password]{flex:1 1 260px;min-width:0}
+input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.btn{all:unset;box-sizing:border-box;cursor:pointer;text-align:center;padding:8px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--surface);font-size:14px;font-weight:700;white-space:nowrap}
+.btn.sub{background:var(--surface);color:var(--accent)}
+.btn:hover{filter:brightness(1.08)}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn[disabled]{opacity:.5;cursor:default;filter:none}
+.check{display:inline-flex;gap:8px;align-items:center;cursor:pointer;font-size:14px}
+.check input{width:16px;height:16px;accent-color:var(--accent);margin:0}
+.note{margin:0;font-size:13px;color:var(--muted)}
+.status{font-size:14px}
+.status.ok{color:var(--accent);font-weight:700}
+.status.err{color:var(--minus);font-weight:700}
+details.help>summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--accent);display:inline-block;border-bottom:1px dashed var(--accent);list-style:none}
+details.help>summary::-webkit-details-marker{display:none}
+details.help ol{margin:8px 0 0;padding-left:1.4em;font-size:13px;display:grid;gap:4px}
+
+/* 取り込み口: クリックでファイル選択、ドラッグでも置ける */
+.drop{border:2px dashed var(--line);border-radius:12px;background:var(--surface);padding:28px 16px;display:grid;gap:10px;justify-items:center;text-align:center;transition:border-color .12s,background .12s}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop.off{opacity:.55;pointer-events:none}
+.drop b{font-size:16px}
+body.dragging .drop:not(.off){border-color:var(--accent)}
+
+.card{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px;display:grid;gap:8px}
+.card.warn{border-left-color:var(--warn)}
+.card.bad{border-left-color:var(--minus)}
+.card.done{border-left-color:var(--line);opacity:.8}
+.chead{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.tag{font-size:12px;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.tag.team{background:var(--warn-soft);color:var(--warn)}
+.dest{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:14px;overflow-wrap:anywhere}
+.from{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.facts{display:flex;flex-wrap:wrap;gap:2px 16px;font-size:13px;color:var(--muted)}
+.facts b{font-family:"IBM Plex Mono",monospace;font-weight:600;color:var(--ink)}
+.msgs{margin:0;padding-left:1.2em;font-size:13px;display:grid;gap:2px}
+.msgs .w{color:var(--warn)}
+.msgs .e{color:var(--minus);font-weight:700}
+.msgs .i{color:var(--muted)}
+.pickm{display:inline-flex;gap:6px;align-items:center;font-size:13px}
+.pickm input{width:7.5em}
+.ctl{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:13px}
+.result{font-size:13px;font-weight:700}
+.result.ok{color:var(--accent)} .result.err{color:var(--minus)}
+.result a{color:inherit}
+.bar{position:sticky;bottom:12px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 16px;box-shadow:0 4px 18px rgba(0,0,0,.08)}
+footer{font-size:12px;color:var(--muted);display:grid;gap:4px}
+footer p{margin:0}
+@media (max-width:600px){.drop{padding:22px 12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">MONOQLO麻雀部 管理者用</div>
+  <h1>ゲームデータのアップロード</h1>
+  <p class="lead">雀魂から書き出した対局記録と、拡張機能が出力した詳細成績(-summary.csv)を、個人戦・チーム戦どちらも、ここに入れるだけで置き場へ上げる。中身を読んで、行き先と名前を自動で決める。</p>
+</header>
+
+<section class="panel" id="auth">
+  <h2>1. 合言葉</h2>
+  <div class="row">
+    <input type="password" id="token" placeholder="管理者の合言葉" autocomplete="off" spellcheck="false" aria-label="合言葉">
+    <button class="btn" id="token-go" type="button">使う</button>
+    <button class="btn sub" id="token-forget" type="button" hidden>忘れる</button>
+  </div>
+  <label class="check"><input type="checkbox" id="token-keep" checked> このブラウザに覚える(共用のパソコンでは外す)</label>
+  <p class="status" id="auth-status" role="status"></p>
+  <p class="note">書き込みは、合言葉を確かめた中継(Google のスクリプト)が行う。GitHub のトークンはそちらにだけ置いてある。合言葉を5回まちがえると、10分間受け付けない。</p>
+</section>
+
+<section class="drop off" id="drop" aria-label="ファイルの置き場">
+  <b>2. ここにCSVを放り込む</b>
+  <span class="note">何個でもまとめて入れられる。対局記録(牌譜履歴)と詳細成績(-summary.csv)を混ぜてもよい。</span>
+  <button class="btn sub" id="pick" type="button">ファイルを選ぶ</button>
+  <input type="file" id="file" accept=".csv,text/csv" multiple hidden>
+</section>
+
+<p class="status" id="load-status" role="status"></p>
+<main id="plans" style="padding-bottom:8px"></main>
+
+<div class="bar" id="bar" hidden>
+  <span class="status" id="bar-text"></span>
+  <span class="row">
+    <button class="btn sub" id="clear" type="button">取り消す</button>
+    <button class="btn" id="upload" type="button">3. アップロード</button>
+  </span>
+</div>
+
+<footer>
+  <p>トークンを使う版は <a href="upload.html">upload.html</a>。</p>
+  <p>対局記録は、書き出したファイルをそのまま上げる(中身は変えない)。行き先は中身から決める: 対局者が全員チーム戦の大会マスターにいればチーム戦、そうでなければ個人戦。</p>
+  <p>詳細成績は、ゲームIDで対局記録と照らし、その対局が入っている月・リーグの <code>summary</code> に合体する。すでにある対局は重ねない。中身が違う同じ対局は、元の方を残して知らせる。</p>
+  <p>上げると、各リポジトリの自動処理(一覧の作り直し・点検・Discord への通知・分割CSVの追加)がいつもどおり動く。</p>
+</footer>
+</div>
+
+<script src="config.js"></script>
+<script>
+(() => {
+"use strict";
+const OWNER = "monoqlo-league";
+const REPO = { personal: "monoqlo-data", team: "event-data" };
+const TOKEN_KEY = "monoqlo-upload-pass";
+const ENDPOINT = ((window.SPLITDATA_CONFIG || {}).uploadEndpoint || "").trim();
+const REC_HEAD = ["開始時間","終了時間","非表示状態","1位プレイヤー名","1位PT","1位最終点数","2位プレイヤー名","2位PT","2位最終点数","3位プレイヤー名","3位PT","3位最終点数","4位プレイヤー名","4位PT","4位最終点数","牌譜リンク","備考"];
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+
+/* ---------- CSV ---------- */
+function parseCSV(text) {
+  text = text.replace(/^﻿/, "");
+  const rows = []; let row = [], f = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; }
+      else f += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(f); f = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(f); f = ""; rows.push(row); row = [];
+    } else f += c;
+  }
+  if (f !== "" || row.length) { row.push(f); rows.push(row); }
+  return rows.filter((r) => !(r.length === 1 && r[0] === ""));
+}
+const cell = (v) => /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+/* 詳細成績は、これまでと同じく BOM 付き・改行 CRLF で書く */
+const toSummaryText = (rows) => "﻿" + rows.map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
+
+/* ---------- 文字 ⇔ base64 ---------- */
+function b64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+const utf8 = new TextEncoder();
+function decode(buf) {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+  catch (_) { return null; }
+}
+
+/* ---------- 置き場を読む(公開リポジトリなので鍵は要らない) ---------- */
+let TOKEN = "";   // ここでは合言葉
+const rawUrl = (repo, path) => `https://raw.githubusercontent.com/${OWNER}/${repo}/main/${encodeURI(path)}?t=${Date.now()}`;
+async function fetchBuf(repo, path) {
+  const res = await fetch(rawUrl(repo, path), { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) { const e = new Error(`読み込み ${res.status}: ${repo}/${path}`); e.status = res.status; throw e; }
+  return res.arrayBuffer();
+}
+/* ファイル一覧は、各リポジトリの index.json(自動で作り直される)から取る */
+const indexes = new Map();
+async function repoIndex(repo) {
+  if (!indexes.has(repo)) indexes.set(repo, (async () => {
+    const buf = await fetchBuf(repo, "index.json");
+    if (!buf) throw new Error(repo + " の index.json が無い");
+    return Object.keys(JSON.parse(new TextDecoder().decode(buf)).files || {});
+  })());
+  return indexes.get(repo);
+}
+async function listDir(repo, dir) {
+  const names = await repoIndex(repo), pre = dir ? dir + "/" : "";
+  return names.filter((n) => n.startsWith(pre) && !n.slice(pre.length).includes("/")).map((n) => ({ name: n.slice(pre.length) }));
+}
+
+/* 読んだファイル(repo:path → {text, rows})。書き込んだら差し替える */
+const files = new Map();
+async function readFile(repo, path) {
+  const key = repo + ":" + path;
+  if (files.has(key)) return files.get(key);
+  const p = (async () => {
+    const buf = await fetchBuf(repo, path);
+    if (!buf) return null;
+    const text = new TextDecoder("utf-8").decode(buf);
+    return { text, rows: parseCSV(text) };
+  })();
+  files.set(key, p);
+  return p;
+}
+
+/* ---------- 中継(合言葉を確かめて書き込む) ---------- */
+async function relay(body) {
+  if (!ENDPOINT) throw new Error("中継の URL が config.js に無い");
+  const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 120000);
+  try {
+    // text/plain で送る(JSON の種類だと、中継が事前確認の通信に応えられない)
+    const res = await fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(Object.assign({ pass: TOKEN }, body)), redirect: "follow", signal: ctrl.signal });
+    if (!res.ok) throw new Error("中継 " + res.status);
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+const RELAY_ERR = { "wrong-pass": "合言葉が違う。", locked: "合言葉のまちがいが続いたので、10分間受け付けない。", "not-configured": "中継にトークンか合言葉が設定されていない。", invalid: "置けない名前のファイルがある。", busy: "中継が混んでいる。少し待って、もう一度押す。", github: "GitHub に書き込めなかった。" };
+
+/* ---------- 置き場の中身(一覧) ---------- */
+const store = { months: [], summaries: new Set(), events: [], ready: null };
+/* 対局記録の行 → {start, hidden, link, ids:[4人のプレイヤーID]} */
+function recGames(rows) {
+  const h = rows[0] || [], ci = (n) => h.indexOf(n), li = ci("牌譜リンク"), si = ci("開始時間"), hi = ci("非表示状態");
+  const pc = [1, 2, 3, 4].map((k) => ci(k + "位プレイヤー名"));
+  return rows.slice(1).map((r) => ({
+    start: (r[si] || "").trim(), hidden: (r[hi] || "").trim() !== "no", link: (r[li] || "").trim(),
+    ids: pc.map((c) => { const m = /^\s*\[[^\]]*\]\[(\d+)\]/.exec(r[c] || ""); return m ? m[1] : ""; }),
+  })).filter((g) => g.link);
+}
+async function loadStore() {
+  const [pRoot, pSum, eRoot, eSum] = await Promise.all([listDir(REPO.personal, ""), listDir(REPO.personal, "summary"), listDir(REPO.team, ""), listDir(REPO.team, "summary")]);
+  store.months = pRoot.map((f) => /^(\d{6})\.csv$/.exec(f.name)).filter(Boolean).map((m) => m[1]).sort();
+  store.summaries = new Set([...pSum.map((f) => REPO.personal + ":summary/" + f.name), ...eSum.map((f) => REPO.team + ":summary/" + f.name)]);
+  const ev = new Map();
+  for (const f of eRoot) {
+    const m = /^(\d{8})-(master|schedule|games(\d+))\.csv$/.exec(f.name); if (!m) continue;
+    const e = ev.get(m[1]) || { id: m[1], master: false, schedule: false, games: [] };
+    if (m[2] === "master") e.master = true; else if (m[2] === "schedule") e.schedule = true; else e.games.push(Number(m[3]));
+    ev.set(m[1], e);
+  }
+  store.events = [...ev.values()].filter((e) => e.master).sort((a, b) => a.id.localeCompare(b.id));
+  // 大会ごとに、名簿・リーグ構成・各リーグの対局数を読む
+  for (const e of store.events) {
+    const mrows = (await readFile(REPO.team, e.id + "-master.csv")).rows, h = mrows[0];
+    const r1 = mrows[1] || [];
+    e.name = r1[h.indexOf("大会名")] || e.id;
+    e.members = new Set(mrows.slice(1).map((r) => (r[h.indexOf("プレイヤーID")] || "").trim()).filter(Boolean));
+    e.leagues = (r1[h.indexOf("リーグ構成")] || "").split("/").map((s) => s.split(":")[0]).filter(Boolean);
+    if (!e.leagues.length) e.leagues = ["1次リーグ"];
+    e.planned = e.leagues.map(() => null);
+    if (e.schedule) {
+      const srows = (await readFile(REPO.team, e.id + "-schedule.csv")).rows, sh = srows[0];
+      const li = sh.indexOf("リーグ"), ni = sh.indexOf("対局数"), sum = new Map();
+      for (const r of srows.slice(1)) sum.set(r[li], (sum.get(r[li]) || 0) + (Number(r[ni]) || 0));
+      e.planned = e.leagues.map((L) => sum.has(L) && sum.get(L) ? sum.get(L) / 4 : null);
+    }
+  }
+}
+const monthPath = (ym) => ym + ".csv";
+const gamesPath = (eid, k) => `${eid}-games${k}.csv`;
+async function recordLinks(repo, path) {
+  const f = await readFile(repo, path);
+  return f ? recGames(f.rows) : null;
+}
+
+/* ---------- 取り込んだファイル → 書き込みの案 ---------- */
+let plans = [];       // {kind:"record"|"summary", side, repo, path, ...}
+let pendingSummaries = [];   // 届いた詳細成績(合体はまとめて作り直す)
+
+function addMsg(p, cls, text) { p.msgs.push([cls, text]); }
+
+async function planRecord(name, buf, text, rows) {
+  const games = recGames(rows);
+  const shown = games.filter((g) => !g.hidden);
+  const p = { kind: "record", from: [name], bytes: new Uint8Array(buf), games, msgs: [], include: true };
+  if (!games.length) { addMsg(p, "e", "対局が1件も無い。"); p.include = false; }
+  // チーム戦か: 表示する全対局の4人が、ある大会の名簿にそろっている
+  const ev = store.events.filter((e) => shown.length && shown.every((g) => g.ids.every((id) => id && e.members.has(id))));
+  if (ev.length) {
+    const e = ev[ev.length - 1];
+    p.side = "team"; p.repo = REPO.team; p.event = e;
+    // リーグ: 置いてある対局記録と対局が重なるいちばん後のリーグ。重ならなければ、置いてある次のリーグ
+    const links = new Set(games.map((g) => g.link));
+    let k = 0;
+    for (const n of [...e.games].sort((a, b) => a - b)) {
+      const ex = await recordLinks(REPO.team, gamesPath(e.id, n));
+      if (ex && ex.some((g) => links.has(g.link))) k = n;
+    }
+    if (!k) k = Math.min((Math.max(0, ...e.games) || 0) + 1, e.leagues.length);
+    p.league = k;
+    if (ev.length > 1) addMsg(p, "w", `対局者が複数の大会の名簿にいる。いちばん新しい大会(${e.id})にした。`);
+  } else {
+    p.side = "personal"; p.repo = REPO.personal;
+    const cnt = new Map();
+    for (const g of shown) { const m = /^(\d{4})-(\d{2})/.exec(g.start); if (m) cnt.set(m[1] + m[2], (cnt.get(m[1] + m[2]) || 0) + 1); }
+    const best = [...cnt].sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))[0];
+    p.month = best ? best[0] : "";
+    if (cnt.size > 1) addMsg(p, "i", "開始時間の月: " + [...cnt].sort().map(([m, n]) => `${m.slice(0, 4)}/${m.slice(4)} ${n}対局`).join("、") + "。いちばん多い月にした。");
+    if (!p.month) { addMsg(p, "e", "開始時間から月を決められない。"); p.include = false; }
+  }
+  p.baseMsgs = p.msgs.slice();
+  plans.push(p);
+  await refreshRecordPlan(p);
+}
+
+/* 行き先が決まった(変わった)対局記録の案を、置いてあるものと比べる */
+async function refreshRecordPlan(p) {
+  p.msgs = p.baseMsgs.slice();
+  p.path = p.side === "team" ? gamesPath(p.event.id, p.league) : monthPath(p.month);
+  const ex = await recordLinks(p.repo, p.path);
+  const up = new Set(p.games.map((g) => g.link));
+  p.exists = !!ex;
+  p.added = ex ? p.games.filter((g) => !ex.some((x) => x.link === g.link)).length : p.games.length;
+  p.removed = ex ? ex.filter((x) => !up.has(x.link)).length : 0;
+  p.same = ex && p.added === 0 && p.removed === 0;
+  p.needOk = false;
+  if (p.removed) {
+    addMsg(p, "e", `置いてある版にあった ${p.removed} 対局が、このファイルには無い。上げるとその対局が消える。別の月・別のリーグのファイルではないか確かめる。`);
+    p.needOk = true;
+  }
+  if (p.same) addMsg(p, "i", "置いてある版と同じ対局がそろっている(新しい対局は無い)。");
+  if (p.side === "team") {
+    const e = p.event, plan = e.planned[p.league - 1];
+    if (!e.games.includes(p.league)) addMsg(p, "i", `${e.leagues[p.league - 1] || p.league + "次リーグ"} の対局記録を新しく置く。`);
+    const later = e.games.filter((n) => n > p.league);
+    if (later.length) addMsg(p, "w", "このリーグより後のリーグの対局記録がもう置いてある。終わったリーグを上書きすると、次のリーグの対局が前のリーグに数えられる。");
+    else if (plan && ex && ex.filter((g) => !g.hidden).length >= plan && p.added) addMsg(p, "w", `このリーグは対局数(${plan})に届いて終了している。次のリーグの対局なら、リーグを替える。`);
+  } else {
+    const later = store.months.filter((m) => m > p.month);
+    if (later.length) addMsg(p, "i", `${p.month} より後の月(${later.join("、")})がもう置いてある。`);
+  }
+  p.include = p.include && !p.needOk && !p.same;
+}
+
+/* 詳細成績: 届いた分をまとめて、行き先(月・リーグ)ごとに合体し直す */
+async function planSummaries() {
+  plans = plans.filter((p) => !p.fromSum || p.done);
+  if (!pendingSummaries.length) return;
+  // 対局記録の目録(ゲームID → 行き先)。この画面で上げる予定の対局記録も含める
+  const where = new Map(), targets = new Map();
+  const addTarget = (repo, recPath, games, sumPath, label) => {
+    const key = repo + ":" + sumPath;
+    if (!targets.has(key)) targets.set(key, { repo, sumPath, recPath, label, games: [] });
+    const t = targets.get(key); t.games = games;
+    for (const g of games) if (!g.hidden) { if (!where.has(g.link)) where.set(g.link, new Set()); where.get(g.link).add(key); }
+  };
+  const recPlans = plans.filter((p) => p.kind === "record" && p.include);
+  for (const ym of store.months) {
+    const pl = recPlans.find((p) => p.side === "personal" && p.path === monthPath(ym));
+    addTarget(REPO.personal, monthPath(ym), pl ? pl.games : await recordLinks(REPO.personal, monthPath(ym)), `summary/${ym}-summary.csv`, `個人 ${ym.slice(0, 4)}年${Number(ym.slice(4))}月`);
+  }
+  for (const p of recPlans) if (p.side === "personal" && !store.months.includes(p.month))
+    addTarget(REPO.personal, p.path, p.games, `summary/${p.month}-summary.csv`, `個人 ${p.month.slice(0, 4)}年${Number(p.month.slice(4))}月`);
+  for (const e of store.events) {
+    const ks = new Set([...e.games, ...recPlans.filter((p) => p.side === "team" && p.event === e).map((p) => p.league)]);
+    for (const k of ks) {
+      const pl = recPlans.find((p) => p.side === "team" && p.event === e && p.league === k);
+      addTarget(REPO.team, gamesPath(e.id, k), pl ? pl.games : await recordLinks(REPO.team, gamesPath(e.id, k)), `summary/${e.id}-games${k}-summary.csv`, `チーム ${e.name} ${e.leagues[k - 1] || k + "次リーグ"}`);
+    }
+  }
+  // 届いた行をゲームIDでまとめる
+  let header = null; const incoming = new Map(), froms = new Map(), loose = [];
+  for (const s of pendingSummaries) {
+    if (!header) header = s.rows[0];
+    else if (s.rows[0].join(",") !== header.join(",")) { loose.push(`${s.name}: 列が、ほかの詳細成績と違うので使わない。`); continue; }
+    const gi = s.rows[0].indexOf("ゲームID"), tmp = new Map();
+    for (const r of s.rows.slice(1)) { const id = (r[gi] || "").trim(); if (!id) continue; if (!tmp.has(id)) tmp.set(id, []); tmp.get(id).push(r); }
+    for (const [id, rs] of tmp) {
+      if (!incoming.has(id)) { incoming.set(id, rs); froms.set(id, s.name); }
+      else if (JSON.stringify(incoming.get(id)) !== JSON.stringify(rs)) loose.push(`${id.slice(0, 15)}… が ${froms.get(id)} と ${s.name} で中身が違う。先に入れた方を使う。`);
+    }
+  }
+  // 行き先ごとに振り分け
+  const per = new Map(), nowhere = [];
+  for (const [id, rs] of incoming) {
+    const ks = where.get(id);
+    if (!ks) { nowhere.push(id); continue; }
+    for (const k of ks) { if (!per.has(k)) per.set(k, new Map()); per.get(k).set(id, rs); }
+  }
+  const H = header, hi = (n) => H.indexOf(n), iv = (r, n) => Number(r[hi(n)] || 0);
+  for (const [key, add] of per) {
+    const t = targets.get(key);
+    const p = { fromSum: true, kind: "summary", side: t.repo === REPO.team ? "team" : "personal", repo: t.repo, path: t.sumPath, label: t.label, msgs: [], include: true, from: [...new Set([...add.keys()].map((id) => froms.get(id)))] };
+    const exFile = store.summaries.has(key) ? await readFile(t.repo, t.sumPath) : null;
+    const exRows = exFile ? exFile.rows : null;
+    if (exRows && exRows[0].join(",") !== H.join(",")) { addMsg(p, "e", "置いてある詳細成績と列が違う。合体しない。"); p.include = false; plans.push(p); continue; }
+    const merged = new Map();
+    if (exRows) for (const r of exRows.slice(1)) { const id = (r[0] || "").trim(); if (!merged.has(id)) merged.set(id, []); merged.get(id).push(r); }
+    let added = 0, same = 0, conflict = 0;
+    for (const [id, rs] of add) {
+      if (!merged.has(id)) { merged.set(id, rs); added++; }
+      else if (JSON.stringify(merged.get(id)) === JSON.stringify(rs)) same++;
+      else conflict++;
+    }
+    // 置いてある行はその並びのまま残し、足す対局を対局記録の古い順に後ろへ足す(差分を小さくするため)
+    const order = [...t.games].filter((g) => !g.hidden).sort((a, b) => a.start.localeCompare(b.start) || a.link.localeCompare(b.link));
+    const out = exRows ? exRows.slice() : [H], fresh = new Set();
+    for (const [id] of add) if (!(exRows && exRows.some((r) => (r[0] || "").trim() === id))) fresh.add(id);
+    for (const g of order) if (fresh.has(g.link)) { out.push(...merged.get(g.link)); fresh.delete(g.link); }
+    // 点検
+    let not4 = 0, inv = 0, cols = 0, cpu = 0;
+    for (const [id, rs] of add) {
+      if (rs.length !== 4) not4++;
+      for (const r of rs) {
+        if (r.length !== H.length) cols++;
+        if (iv(r, "ツモ和了") + iv(r, "ロン和了") !== iv(r, "和了数") || iv(r, "先制立直") + iv(r, "追っかけ立直") !== iv(r, "立直数")) inv++;
+        if (!(r[hi("内部ID")] || "").trim()) cpu++;
+      }
+    }
+    const total = order.length, have = order.filter((g) => merged.has(g.link)).length;
+    p.text = toSummaryText(out);
+    p.added = added; p.same = same; p.have = have; p.total = total; p.exists = !!exRows;
+    if (conflict) addMsg(p, "w", `${conflict} 対局は、置いてある詳細成績と中身が違う。置いてある方を残した。`);
+    if (not4) addMsg(p, "e", `${not4} 対局が4人分そろっていない。`);
+    if (cols) addMsg(p, "e", `列の数が合わない行が ${cols} 行ある。`);
+    if (inv) addMsg(p, "w", `和了数・立直数の内訳が合わない行が ${inv} 行ある。`);
+    if (cpu) addMsg(p, "i", `内部IDが空の行(回線切れのCPUなど)が ${cpu} 行ある。ランキングでは誰にも数えない。`);
+    if (have < total) addMsg(p, "i", `対局記録の ${total} 対局のうち、まだ ${total - have} 対局の詳細成績が無い。`);
+    if (!added) { addMsg(p, "i", "新しい対局は無い(すべて置いてある)。"); p.include = false; }
+    if (not4 || cols) p.include = false;
+    plans.push(p);
+  }
+  if (nowhere.length || loose.length) {
+    const p = { fromSum: true, kind: "note", msgs: [], include: false, from: [...new Set(pendingSummaries.map((s) => s.name))] };
+    if (nowhere.length) addMsg(p, "w", `${nowhere.length} 対局は、どの対局記録にも無い(非表示を含む)ので使わない。先に対局記録を上げると入る: ${nowhere.slice(0, 3).map((x) => x.slice(0, 15) + "…").join("、")}${nowhere.length > 3 ? " ほか" : ""}`);
+    for (const m of loose) addMsg(p, "w", m);
+    plans.push(p);
+  }
+}
+
+async function takeFiles(list) {
+  if (!TOKEN || !list.length) return;
+  $("load-status").textContent = "読んでいる…"; $("load-status").className = "status";
+  try {
+    await store.ready;
+    for (const f of list) {
+      const buf = await f.arrayBuffer(), text = decode(buf);
+      if (text == null) { plans.push({ kind: "note", from: [f.name], include: false, msgs: [["e", "UTF-8 ではないので読めない。"]] }); continue; }
+      const rows = parseCSV(text), h = (rows[0] || []).map((s) => s.trim());
+      if (h.join(",") === REC_HEAD.join(",")) await planRecord(f.name, buf, text, rows);
+      else if (h[0] === "ゲームID" && h.includes("名前") && h.includes("局数")) pendingSummaries.push({ name: f.name, rows });
+      else plans.push({ kind: "note", from: [f.name], include: false, msgs: [["e", "対局記録(牌譜履歴)でも詳細成績(-summary.csv)でもない。"]] });
+    }
+    await planSummaries();
+    $("load-status").textContent = "";
+  } catch (e) {
+    $("load-status").textContent = "読めなかった: " + e.message; $("load-status").className = "status err";
+  }
+  render();
+}
+
+/* ---------- 表示 ---------- */
+function render() {
+  const host = $("plans"); host.textContent = "";
+  host.style.display = "grid"; host.style.gap = "12px";
+  const order = { record: 0, summary: 1, note: 2 };
+  plans.sort((a, b) => order[a.kind] - order[b.kind]);
+  for (const p of plans) {
+    const bad = p.msgs.some((m) => m[0] === "e"), warn = p.msgs.some((m) => m[0] === "w");
+    const card = el("article", "card" + (p.done ? " done" : bad ? " bad" : warn ? " warn" : ""));
+    const head = el("div", "chead");
+    if (p.kind !== "note") {
+      head.append(el("span", "tag" + (p.side === "team" ? " team" : ""), (p.side === "team" ? "チーム戦" : "個人戦") + "・" + (p.kind === "record" ? "対局記録" : "詳細成績")));
+      head.append(el("span", "dest", `${p.repo}/${p.path}`));
+    } else head.append(el("span", "tag", "使わないもの"));
+    card.append(head);
+    card.append(el("div", "from", "もと: " + p.from.join("、")));
+    const facts = el("div", "facts");
+    const fact = (label, v) => { const s = el("span", "", label + " "); s.append(el("b", "", String(v))); facts.append(s); };
+    if (p.kind === "record") {
+      fact("対局", p.games.length);
+      if (p.exists) { fact("新しい対局", p.added); if (p.removed) fact("消える対局", p.removed); } else facts.append(el("span", "", "新しいファイル"));
+    } else if (p.kind === "summary") {
+      fact("足す対局", p.added); if (p.same) fact("すでにある", p.same); fact("合体後", `${p.have} / ${p.total}`);
+      facts.append(el("span", "", p.label));
+    }
+    if (facts.childNodes.length) card.append(facts);
+    if (p.msgs.length) { const ul = el("ul", "msgs"); for (const [c, t] of p.msgs) ul.append(el("li", c, t)); card.append(ul); }
+
+    if (p.kind !== "note" && !p.done) {
+      const ctl = el("div", "ctl");
+      if (p.kind === "record") {
+        if (p.side === "personal") {
+          const lab = el("label", "pickm"); lab.append("月 ");
+          const inp = el("input"); inp.type = "text"; inp.value = p.month; inp.size = 7; inp.className = "mono"; inp.setAttribute("aria-label", "月(YYYYMM)");
+          inp.addEventListener("change", async () => { if (!/^\d{6}$/.test(inp.value)) { inp.value = p.month; return; } p.month = inp.value; p.include = true; await refreshRecordPlan(p); await planSummaries(); render(); });
+          lab.append(inp); ctl.append(lab);
+        } else {
+          const sel = el("select"); sel.setAttribute("aria-label", "リーグ");
+          p.event.leagues.forEach((L, i) => { const o = el("option", "", `${i + 1}: ${L}`); o.value = i + 1; if (i + 1 === p.league) o.selected = true; sel.append(o); });
+          sel.addEventListener("change", async () => { p.league = Number(sel.value); p.include = true; await refreshRecordPlan(p); await planSummaries(); render(); });
+          const lab = el("label", "check"); lab.append(`${p.event.name} の`, sel); ctl.append(lab);
+        }
+      }
+      const lab = el("label", "check"); const cb = el("input"); cb.type = "checkbox"; cb.checked = p.include;
+      cb.addEventListener("change", () => { p.include = cb.checked; renderBar(); });
+      lab.append(cb, p.needOk ? "それでも上げる" : "上げる"); ctl.append(lab);
+      card.append(ctl);
+    }
+    if (p.result) { const r = el("div", "result " + (p.result.ok ? "ok" : "err")); if (p.result.url) { const a = el("a", "", p.result.text); a.href = p.result.url; a.target = "_blank"; a.rel = "noopener"; r.append(a); } else r.textContent = p.result.text; card.append(r); }
+    host.append(card);
+  }
+  renderBar();
+}
+function renderBar() {
+  const todo = plans.filter((p) => p.kind !== "note" && p.include && !p.done);
+  $("bar").hidden = !plans.length;
+  $("upload").disabled = !todo.length;
+  $("bar-text").textContent = todo.length ? `${todo.length} ファイルを上げる` : "上げるものは無い";
+}
+
+/* ---------- 書き込み(リポジトリごとに1コミット。中継が行う) ---------- */
+async function commit(repo, items, message) {
+  const r = await relay({ op: "commit", repo, message, files: items.map((it) => ({ path: it.path, content: b64(it.bytes) })) });
+  if (!r.ok) { const e = new Error((RELAY_ERR[r.error] || r.error) + (r.detail ? " " + r.detail : "")); e.code = r.error; throw e; }
+  return { html_url: r.url };
+}
+
+async function upload() {
+  const todo = plans.filter((p) => p.kind !== "note" && p.include && !p.done);
+  if (!todo.length) return;
+  $("upload").disabled = true; $("clear").disabled = true;
+  $("bar-text").textContent = "上げている…";
+  // 詳細成績は、置いてある最新の版から作り直してから上げる(ほかの人の更新を消さないため)
+  files.clear(); indexes.clear();
+  try { await loadStore(); await planSummaries(); }
+  catch (e) { $("bar-text").textContent = "置き場を読み直せなかった: " + e.message; $("clear").disabled = false; render(); return; }
+  const now = plans.filter((p) => p.kind !== "note" && p.include && !p.done);
+  for (const repo of [REPO.personal, REPO.team]) {
+    const mine = now.filter((p) => p.repo === repo);
+    if (!mine.length) continue;
+    const items = mine.map((p) => ({ path: p.path, bytes: p.kind === "record" ? p.bytes : utf8.encode(p.text) }));
+    const names = mine.map((p) => p.path.replace(/^summary\//, "")).join("、");
+    try {
+      const c = await commit(repo, items, `${names} を更新(アップロードページから)`);
+      for (const p of mine) { p.done = true; p.result = { ok: true, text: "上げた(コミットを見る)", url: c.html_url }; }
+    } catch (e) {
+      for (const p of mine) p.result = { ok: false, text: "上げられなかった: " + e.message };
+    }
+  }
+  files.clear(); indexes.clear();
+  store.ready = loadStore().catch(() => {});
+  if (!plans.some((p) => p.kind === "summary" && !p.done && p.include)) pendingSummaries = [];
+  $("clear").disabled = false;
+  render();
+  const left = plans.filter((p) => p.kind !== "note" && p.include && !p.done).length;
+  $("bar-text").textContent = left ? "上げられなかったものがある" : "上げた。1〜2分でランキングに出る。";
+}
+
+/* ---------- 合言葉 ---------- */
+function setAuth(text, cls) { $("auth-status").textContent = text; $("auth-status").className = "status" + (cls ? " " + cls : ""); }
+async function useToken(t) {
+  const pass = t.trim(); if (!pass) return;
+  if (!ENDPOINT) { setAuth("中継の URL が config.js にまだ無い(README の手順で設定する)。", "err"); return; }
+  setAuth("確かめている…(数秒かかる)");
+  TOKEN = pass;
+  try {
+    const r = await relay({ op: "check" });
+    if (!r.ok) { TOKEN = ""; setAuth(RELAY_ERR[r.error] || "確かめられなかった: " + r.error, "err"); if (r.error === "wrong-pass") try { localStorage.removeItem(TOKEN_KEY); } catch (_) {} return; }
+    try { if ($("token-keep").checked) localStorage.setItem(TOKEN_KEY, TOKEN); else localStorage.removeItem(TOKEN_KEY); } catch (_) {}
+    setAuth("使える。", "ok");
+    $("token").value = ""; $("token").placeholder = "設定済み"; $("token-forget").hidden = false;
+    $("drop").classList.remove("off");
+    store.ready = loadStore();
+    await store.ready;
+  } catch (e) {
+    TOKEN = "";
+    setAuth("確かめられなかった: " + e.message, "err");
+  }
+}
+$("token-go").addEventListener("click", () => useToken($("token").value));
+$("token").addEventListener("keydown", (e) => { if (e.key === "Enter") useToken($("token").value); });
+$("token-forget").addEventListener("click", () => {
+  try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
+  TOKEN = ""; $("token-forget").hidden = true; $("token").placeholder = "管理者の合言葉"; $("drop").classList.add("off"); setAuth("忘れた。");
+});
+
+/* ---------- ファイルの受け取り(選ぶ・放り込む) ---------- */
+$("pick").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", () => { const l = [...$("file").files]; $("file").value = ""; takeFiles(l); });
+let depth = 0;
+window.addEventListener("dragenter", (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { depth++; document.body.classList.add("dragging"); } });
+window.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; document.body.classList.remove("dragging"); $("drop").classList.remove("over"); } });
+window.addEventListener("dragover", (e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = TOKEN ? "copy" : "none"; });
+window.addEventListener("drop", (e) => {   // 画面のどこに落としても受け取る
+  e.preventDefault(); depth = 0; document.body.classList.remove("dragging"); $("drop").classList.remove("over");
+  if (!TOKEN) { setAuth("先に合言葉を入れる。", "err"); return; }
+  takeFiles([...(e.dataTransfer ? e.dataTransfer.files : [])].filter((f) => /\.csv$/i.test(f.name) || f.type === "text/csv"));
+});
+$("drop").addEventListener("dragover", () => $("drop").classList.add("over"));
+$("drop").addEventListener("dragleave", () => $("drop").classList.remove("over"));
+$("clear").addEventListener("click", () => { plans = []; pendingSummaries = []; render(); });
+$("upload").addEventListener("click", upload);
+
+try { const saved = localStorage.getItem(TOKEN_KEY); if (saved) useToken(saved); } catch (_) {}
+})();
+</script>
+</body>
+</html>
