@@ -7,6 +7,6 @@ window.SPLITDATA_CONFIG = {
   // ゲームデータのアップロード(合言葉版 upload2.html)の中継。gas/Upload.gs をウェブアプリとして公開したURLを貼る。
   uploadEndpoint: "",
   // ゲームデータのアップロード(upload.html)の「GitHubでログイン」。GitHub App の Client ID と、gas/Login.gs を公開したURL。
-  githubClientId: "",
+  githubClientId: "Iv23liNkQ0xAhkmZxkmP",
   loginEndpoint: "",
 };
