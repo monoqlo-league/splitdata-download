@@ -6,8 +6,13 @@
 # - 10対局に満たない残りは出さない。次のアップロードで10対局に達したときに出す。
 # - 対象は FROM_MONTH 以降の月だけ。それより前の月は手作業で分割済み。
 # - 非表示状態が no でない対局は入れない。
+# - チーム戦の対局は入れない。event-data の対局記録(*-gamesN.csv)にある対局(牌譜リンクで見る)は飛ばす。
+#   event-data のフォルダは2つめの引数か、環境変数 EVENT_DATA で渡す(ワークフローが取ってくる)。
+# - 月のCSVが、すでに分割した対局を MISSING_LIMIT 対局以上なくしていたら、その月は分割しない。
+#   個人戦の月のCSVは、毎回その月の全対局を入れて上書きするので、ふつうは対局が減らない。
+#   チーム戦の対局記録や別の月のCSVを誤って上げたときに、このきまりで止まる(monoqlo-data 側の点検が Discord に知らせる)。
 #
-# 使い方: リポジトリの直下で  python3 tools/split-new.py <monoqlo-data のフォルダ>
+# 使い方: リポジトリの直下で  python3 tools/split-new.py <monoqlo-data のフォルダ> [<event-data のフォルダ>]
 # 終わったら node tools/build-manifest.js で files.json も作り直す(ワークフローがやる)。
 import csv
 import io
@@ -17,9 +22,11 @@ import sys
 
 FROM_MONTH = os.environ.get("SPLIT_FROM_MONTH", "202610")
 GAMES_PER_FILE = 10
+MISSING_LIMIT = 10
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "..", "monoqlo-data")
+event = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("EVENT_DATA", "")
 
 
 def read_csv(path):
@@ -28,6 +35,20 @@ def read_csv(path):
     rows = [r for r in rows if any(c.strip() for c in r)]
     return (rows[0], rows[1:]) if rows else ([], [])
 
+
+# チーム戦の対局(牌譜リンク)。event-data が無ければ空のまま(この確かめはしない)
+team = set()
+if event and os.path.isdir(event):
+    for name in sorted(os.listdir(event)):
+        if not re.fullmatch(r"\d{8}-games\d+\.csv", name):
+            continue
+        h, rs = read_csv(os.path.join(event, name))
+        if "牌譜リンク" in h:
+            k = h.index("牌譜リンク")
+            team.update(r[k].strip() for r in rs if len(r) > k and r[k].strip())
+    print(f"チーム戦の対局: {len(team)}対局(分割に入れない)")
+else:
+    print("::warning::event-data が見つからないため、チーム戦の対局を見分けられない")
 
 made = []
 for name in sorted(os.listdir(data)):
@@ -57,12 +78,22 @@ for name in sorted(os.listdir(data)):
                 k = h.index("牌譜リンク")
                 done.update(r[k].strip() for r in rs if len(r) > k)
 
-    new, seen = [], set()
+    links = {r[i_link].strip() for r in rows if len(r) > i_link}
+    missing = len(done - links)
+    if missing >= MISSING_LIMIT:
+        print(f"::warning::{name}: すでに分割した対局のうち{missing}対局が入っていない。"
+              "チーム戦の対局記録や別の月のCSVが上がった可能性があるため、この月は分割しない")
+        continue
+
+    new, seen, skipped = [], set(), 0
     for r in rows:
         if len(r) <= max(i_start, i_hide, i_link):
             continue
         link = r[i_link].strip()
         if not link or link in done or link in seen or r[i_hide].strip() != "no":
+            continue
+        if link in team:
+            skipped += 1
             continue
         seen.add(link)
         new.append(r)
@@ -82,6 +113,8 @@ for name in sorted(os.listdir(data)):
             f.write(buf.getvalue())
         made.append(f"{month}/{out}")
     rest = len(new) - count * GAMES_PER_FILE
+    if skipped:
+        print(f"::warning::{name}: チーム戦の対局が{skipped}対局入っていたため、分割に入れなかった")
     print(f"{month}: 新しい対局 {len(new)} → {count}ファイル作成、{rest}対局は次回へ")
 
 print(f"作成: {len(made)}ファイル")

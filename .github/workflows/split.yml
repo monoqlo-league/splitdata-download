@@ -29,9 +29,14 @@ jobs:
         with:
           repository: monoqlo-league/monoqlo-data
           path: _data
+      - name: チーム戦の対局記録を取ってくる(チーム戦の対局を分割に入れないため)
+        uses: actions/checkout@v4
+        with:
+          repository: monoqlo-league/event-data
+          path: _event
       - name: 分割する
         id: split
-        run: python3 tools/split-new.py _data
+        run: python3 tools/split-new.py _data _event
       - name: 保存して公開する
         if: steps.split.outputs.made != '0'
         env:
