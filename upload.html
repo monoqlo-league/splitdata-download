@@ -81,6 +81,8 @@ body.dragging .drop:not(.off){border-color:var(--accent)}
 .kind:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
 .kind input{width:16px;height:16px;accent-color:var(--accent);margin:0}
 .kind .note{font-weight:400}
+.cpus{display:grid;gap:6px;padding:8px 10px;border:1px dashed var(--warn);border-radius:8px;font-size:13px}
+.cpu{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
 .pickm{display:inline-flex;gap:6px;align-items:center;font-size:13px}
 .pickm input{width:7.5em}
 .ctl{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:13px}
@@ -263,6 +265,7 @@ async function loadStore() {
     const r1 = mrows[1] || [];
     e.name = r1[h.indexOf("大会名")] || e.id;
     e.members = new Set(mrows.slice(1).map((r) => (r[h.indexOf("プレイヤーID")] || "").trim()).filter(Boolean));
+    e.nameOf = new Map(mrows.slice(1).map((r) => [(r[h.indexOf("プレイヤーID")] || "").trim(), (r[h.indexOf("プレイヤー名")] || "").trim()]));
     e.teamOf = new Map(mrows.slice(1).map((r) => [(r[h.indexOf("プレイヤーID")] || "").trim(), (r[h.indexOf("チーム名")] || "").trim()]));
     e.leagues = (r1[h.indexOf("リーグ構成")] || "").split("/").map((s) => s.split(":")[0]).filter(Boolean);
     if (!e.leagues.length) e.leagues = ["1次リーグ"];
@@ -271,7 +274,15 @@ async function loadStore() {
       const srows = (await readFile(REPO.team, e.id + "-schedule.csv")).rows, sh = srows[0];
       const li = sh.indexOf("リーグ"), ni = sh.indexOf("対局数"), di = sh.indexOf("開始日"), sum = new Map();
       const days = srows.slice(1).map((r) => (r[di] || "").trim()).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
-      e.startDate = days[0] || "";   // 大会のいちばん早い開始日(これより前の対局は、この大会の対局ではない)
+      e.startDate = days[0] || "";
+      // 日付 → 卓ごとのチームの集まり(各回戦の欄「2026-09-05(土) 薔薇 東」から)
+      e.tables = new Map();
+      const ti = sh.indexOf("チーム"), rc = sh.map((n, i) => /^第\d+戦$/.test(n) ? i : -1).filter((i) => i >= 0), tmp = new Map();
+      for (const r of srows.slice(1)) for (const c of rc) {
+        const m = /^(\d{4}-\d{2}-\d{2})\S*\s+(\S+)\s+[東南西北]/.exec((r[c] || "").trim()); if (!m) continue;
+        const key = m[1] + " " + m[2]; if (!tmp.has(key)) tmp.set(key, new Set()); tmp.get(key).add((r[ti] || "").trim());
+      }
+      for (const [key, set] of tmp) { const d = key.slice(0, 10); if (!e.tables.has(d)) e.tables.set(d, []); e.tables.get(d).push(set); }   // 大会のいちばん早い開始日(これより前の対局は、この大会の対局ではない)
       for (const r of srows.slice(1)) sum.set(r[li], (sum.get(r[li]) || 0) + (Number(r[ni]) || 0));
       e.planned = e.leagues.map((L) => sum.has(L) && sum.get(L) ? sum.get(L) / 4 : null);
     }
@@ -357,7 +368,7 @@ async function planTeamExport(name, text, stop) {
     const g = recGames([head, parseCSV(raw)[0]])[0];
     if (!g) continue;
     if (e.startDate && g.start.slice(0, 10) < e.startDate) { before++; continue; }   // 大会が始まる前の対局(同じロビーの別の大会など)は使わない
-    items.push({ raw, g });
+    items.push({ raw, g, cells: parseCSV(raw)[0] });
   }
   // 置いてある対局記録の対局と、リーグごとの対局数
   const known = new Map(), count = Array(L).fill(0);
@@ -374,15 +385,15 @@ async function planTeamExport(name, text, stop) {
     if (!it.g.hidden) count[cur]++;
   }
   const over = e.planned[L - 1] != null && count[L - 1] > e.planned[L - 1];
+  await findCpuSeats(e, head, items);
   const byK = new Map();
   for (const it of items) { if (!byK.has(it.k)) byK.set(it.k, []); byK.get(it.k).push(it); }   // 元の並びのまま
   const summary = [...byK.keys()].sort((a, b) => a - b).map((k) => `${e.leagues[k - 1] || k + "次リーグ"} ${byK.get(k).length}`).join("、");
   for (const k of [...byK.keys()].sort((a, b) => a - b)) {
     const its = byK.get(k);
-    const textK = (hasBom ? "﻿" : "") + [headLine, ...its.map((it) => it.raw)].join(eol) + eol;
     const p = { kind: "record", side: "team", repo: REPO.team, event: e, league: k, split: true, name, from: [name],
-      bytes: utf8.encode(textK), games: its.map((it) => it.g), msgs: [], include: true };
-    p.shown = p.games.filter((g) => !g.hidden);
+      items: its, head, headLine, eol, hasBom, msgs: [], include: true };
+    buildTeamFile(p);
     addMsg(p, "i", `書き出しを1対局ずつリーグに分けた(${summary})。このファイルは ${e.leagues[k - 1] || k + "次リーグ"} の分。`);
     if (before) addMsg(p, "w", `大会の開始日(${e.startDate})より前の対局が ${before} あったので、どのリーグにも入れなかった。`);
     if (k === L && over) addMsg(p, "w", `${e.leagues[L - 1]} の対局数(${e.planned[L - 1]})を超えている。日程や対局記録を確かめる。`);
@@ -391,6 +402,61 @@ async function planTeamExport(name, text, stop) {
     plans.push(p);
     await refreshRecordPlan(p);
   }
+}
+
+/* ---------- CPU の席(来なかった人の代わりに CPU が打った対局) ----------
+   対局記録の「N位プレイヤー名」が [JP][ID]名前 の形でない席を CPU とみる。
+   その席は、本来の対局者(来なかったチームのメンバー)に置き換えて上げる。置き換えた行は書き出しの元の行と違う形になる。
+   - 置いてある対局記録で、その対局のその席がもう置き換えてあれば、同じ人を使う(上げ直すたびに選ばなくてよい)
+   - 来なかったチーム: スケジュールでその日にほかの3人のチームと同じ卓だったチーム。わからなければ、卓にいないチームのメンバー全員から選ぶ */
+const SEAT_RE = /^\s*\[([^\]]*)\]\[(\d+)\]/;
+async function findCpuSeats(e, head, items) {
+  const sc = [1, 2, 3, 4].map((i) => head.indexOf(i + "位プレイヤー名"));
+  // 置いてある対局記録の行(ゲームID → 行)
+  const prev = new Map();
+  for (const k of e.games) {
+    const f = await readFile(REPO.team, gamesPath(e.id, k)); if (!f) continue;
+    const h = f.rows[0], li = h.indexOf("牌譜リンク"), pc = [1, 2, 3, 4].map((i) => h.indexOf(i + "位プレイヤー名"));
+    for (const r of f.rows.slice(1)) prev.set((r[li] || "").trim(), pc.map((c) => r[c] || ""));
+  }
+  // スケジュール: 日付 → 卓 → チームの集まり(予選など、チーム名で組まれているリーグだけ使える)
+  const tables = e.tables || new Map();
+  const teams = [...new Set(e.teamOf.values())];
+  // リーグごとに、そのリーグで打っているチーム(セミファイナル以降は、勝ち上がったチームだけになる)
+  const inLeague = new Map();
+  for (const it of items) for (const v of it.cells) { const m = SEAT_RE.exec(v || ""); const t = m && e.teamOf.get(m[2]); if (t) { if (!inLeague.has(it.k)) inLeague.set(it.k, new Set()); inLeague.get(it.k).add(t); } }
+  for (const it of items) {
+    it.cpu = [];
+    sc.forEach((c, i) => {
+      if (c < 0 || SEAT_RE.test(it.cells[c] || "")) return;
+      const others = sc.filter((x, j) => j !== i).map((x) => SEAT_RE.exec(it.cells[x] || "")).filter(Boolean).map((m) => e.teamOf.get(m[2])).filter(Boolean);
+      let cand = null;
+      for (const set of (tables.get(it.g.start.slice(0, 10)) || [])) if (others.every((t) => set.has(t)) && set.size === 4) { const rest = [...set].filter((t) => !others.includes(t)); if (rest.length === 1) cand = rest; }
+      const lt = inLeague.get(it.k);
+      const candTeams = cand || teams.filter((t) => !others.includes(t) && (!lt || lt.has(t)));
+      const old = prev.get(it.g.link), oldCell = old && old[i] && SEAT_RE.test(old[i]) ? old[i] : "";
+      it.cpu.push({ col: c, seat: i + 1, raw: it.cells[c] || "", team: cand ? cand[0] : "", candTeams, choice: oldCell, fromPrev: !!oldCell });
+    });
+  }
+}
+/* 置き換えを入れて、このリーグのファイルの中身を作り直す */
+function buildTeamFile(p) {
+  const fmt = (cells, it) => {
+    const ref = cells.find((v, j) => SEAT_RE.test(v || ""));            // ほかの席の書き方([JP] と末尾の () )に合わせる
+    return it.cpu.reduce((cs, s) => { if (s.choice) cs[s.col] = s.choice; return cs; }, cells.slice());
+  };
+  const lines = p.items.map((it) => it.cpu && it.cpu.some((s) => s.choice) ? fmt(it.cells, it).map(cell).join(",") : it.raw);
+  const textK = (p.hasBom ? "\uFEFF" : "") + [p.headLine, ...lines].join(p.eol) + p.eol;
+  p.bytes = utf8.encode(textK);
+  p.games = p.items.map((it) => recGames([p.head, it.cpu && it.cpu.some((s) => s.choice) ? fmt(it.cells, it) : it.cells])[0]);
+  p.shown = p.games.filter((g) => !g.hidden);
+  p.cpuSeats = p.items.flatMap((it) => (it.cpu || []).map((s) => ({ it, s })));
+}
+/* 選んだメンバーを、席の書き方にする(ほかの席と同じく [JP][ID]名前() ) */
+function seatText(it, id, name) {
+  const ref = it.cells.find((v) => SEAT_RE.test(v || "")) || "[JP][0]x()";
+  const m = SEAT_RE.exec(ref), tail = /\(\)\s*$/.test(ref) ? "()" : "";
+  return `[${m ? m[1] : "JP"}][${id}]${name}${tail}`;
 }
 
 /* 行き先が決まった(変わった)対局記録の案を、置いてあるものと比べる */
@@ -419,7 +485,13 @@ async function refreshRecordPlan(p) {
     const later = store.months.filter((m) => m > p.month);
     if (later.length) addMsg(p, "i", `${p.month} より後の月(${later.join("、")})がもう置いてある。`);
   }
-  p.include = p.include && !p.needOk && !p.same && !p.blocked;
+  p.cpuWait = false;
+  if (p.cpuSeats && p.cpuSeats.length) {
+    const wait = p.cpuSeats.filter(({ it, s }) => !s.choice && !it.g.hidden).length;
+    if (wait) { addMsg(p, "e", `CPU が打った席が ${wait} ある。下で、本来の対局者を選ぶまで上げない。`); p.cpuWait = true; }
+    else addMsg(p, "i", `CPU の席 ${p.cpuSeats.length} を、本来の対局者に置き換えて上げる(詳細成績はCPUの打ち筋なので、その人には数えない)。`);
+  }
+  p.include = p.include && !p.needOk && !p.same && !p.blocked && !p.cpuWait;
 }
 
 /* 詳細成績: 届いた分をまとめて、行き先(月・リーグ)ごとに合体し直す */
@@ -593,6 +665,29 @@ function render() {
           lab.append(inp); ctl.append(lab);
         } else if (p.split) {
           ctl.append(el("span", "pickm", `${p.event.name} の ${p.event.leagues[p.league - 1] || p.league + "次リーグ"}`));
+          if (p.cpuSeats && p.cpuSeats.length) {
+            const box = el("div", "cpus");
+            for (const { it, s } of p.cpuSeats) {
+              const row = el("label", "cpu");
+              row.append(el("span", "mono", `${it.g.start.slice(5, 16)}`), ` ${s.seat}位の席(${s.raw || "空欄"})${s.team ? "・" + s.team : ""} → `);
+              const sel = el("select"); sel.setAttribute("aria-label", `${it.g.start} の ${s.seat}位の本来の対局者`);
+              const o0 = el("option", "", "本来の対局者を選ぶ"); o0.value = ""; sel.append(o0);
+              for (const t of s.candTeams) {
+                const og = document.createElement("optgroup"); og.label = t;
+                for (const [id, tm] of p.event.teamOf) if (tm === t) {
+                  const o = el("option", "", p.event.nameOf.get(id) || id); o.value = seatText(it, id, p.event.nameOf.get(id) || id);
+                  if (o.value === s.choice || (s.choice && SEAT_RE.exec(s.choice)[2] === id)) o.selected = true;
+                  og.append(o);
+                }
+                sel.append(og);
+              }
+              sel.addEventListener("change", async () => { s.choice = sel.value; s.fromPrev = false; buildTeamFile(p); p.include = !p.blocked; await refreshRecordPlan(p); await planSummaries(); render(); });
+              row.append(sel);
+              if (s.fromPrev) row.append(el("span", "note", " (置いてある版で選んだ人)"));
+              box.append(row);
+            }
+            card.insertBefore(box, null);
+          }
         } else {
           const sel = el("select"); sel.setAttribute("aria-label", "リーグ");
           p.event.leagues.forEach((L, i) => { const o = el("option", "", `${i + 1}: ${L}`); o.value = i + 1; if (i + 1 === p.league) o.selected = true; sel.append(o); });
