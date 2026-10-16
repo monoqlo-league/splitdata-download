@@ -269,7 +269,9 @@ async function loadStore() {
     e.planned = e.leagues.map(() => null);
     if (e.schedule) {
       const srows = (await readFile(REPO.team, e.id + "-schedule.csv")).rows, sh = srows[0];
-      const li = sh.indexOf("リーグ"), ni = sh.indexOf("対局数"), sum = new Map();
+      const li = sh.indexOf("リーグ"), ni = sh.indexOf("対局数"), di = sh.indexOf("開始日"), sum = new Map();
+      const days = srows.slice(1).map((r) => (r[di] || "").trim()).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+      e.startDate = days[0] || "";   // 大会のいちばん早い開始日(これより前の対局は、この大会の対局ではない)
       for (const r of srows.slice(1)) sum.set(r[li], (sum.get(r[li]) || 0) + (Number(r[ni]) || 0));
       e.planned = e.leagues.map((L) => sum.has(L) && sum.get(L) ? sum.get(L) / 4 : null);
     }
@@ -312,15 +314,15 @@ async function planRecord(name, buf, text, rows) {
     const c = ex ? ex.filter((g) => links.has(g.link)).length : 0;
     if (c) tHit.push({ e, k, text: `${gamesPath(e.id, k)} に ${c} 対局` });
   }
-  if (KIND === "team") {
-    p.repo = REPO.team; p.event = EVENT;
-    // リーグ: 置いてある対局記録と重なるいちばん後のリーグ。重ならなければ、置いてある次のリーグ
-    const ks = tHit.filter((h) => h.e === EVENT).map((h) => h.k);
-    p.league = ks.length ? Math.max(...ks) : Math.min((Math.max(0, ...EVENT.games) || 0) + 1, EVENT.leagues.length);
-    if (pHit.length) block(`個人戦の対局が入っている(${pHit.join("、")})。チーム戦の対局記録には入れない。個人戦のファイルではないか、「2.」の選択を確かめる。`);
+  if (KIND === "team" && games.length) {
+    const stop = [];
+    if (pHit.length) stop.push(`個人戦の対局が入っている(${pHit.join("、")})。チーム戦の対局記録には入れない。個人戦のファイルではないか、「2.」の選択を確かめる。`);
     const other = tHit.filter((h) => h.e !== EVENT);
-    if (other.length) block(`別の大会の対局が入っている(${other.map((h) => h.text).join("、")})。「2.」の大会を確かめる。`);
-  } else {
+    if (other.length) stop.push(`別の大会の対局が入っている(${other.map((h) => h.text).join("、")})。「2.」の大会を確かめる。`);
+    return planTeamExport(name, text, stop);
+  }
+  if (KIND === "team") { p.repo = REPO.team; p.event = EVENT; p.league = 1; }
+  else {
     p.repo = REPO.personal;
     const cnt = new Map();
     for (const g of shown) { const m = /^(\d{4})-(\d{2})/.exec(g.start); if (m) cnt.set(m[1] + m[2], (cnt.get(m[1] + m[2]) || 0) + 1); }
@@ -333,6 +335,62 @@ async function planRecord(name, buf, text, rows) {
   p.baseMsgs = p.msgs.slice();
   plans.push(p);
   await refreshRecordPlan(p);
+}
+
+/* チーム戦: 雀魂の書き出しには、予選・セミファイナル・ファイナルの対局がまとめて入っている。
+   1対局ずつリーグを決めて、リーグごとの -gamesN.csv に分ける。
+   - 置いてある -gamesN.csv にある対局は、そのリーグ
+   - 新しい対局は、開始時間の古い順に、まだ対局数(スケジュール)に届いていないいちばん前のリーグへ入れる。
+     届いたら次のリーグへ。対局数の決まっていない(スケジュールが無い・未定の)リーグには、残りを全部入れる
+   - 非表示の対局は、その時点のリーグに入れる(対局数には数えない)
+   ファイルの行は書き換えず、元の行をそのまま振り分ける */
+async function planTeamExport(name, text, stop) {
+  const e = EVENT, L = e.leagues.length;
+  const hasBom = text.charCodeAt(0) === 0xfeff, body = hasBom ? text.slice(1) : text;
+  const eol = body.includes("\r\n") ? "\r\n" : "\n";
+  const lines = body.split(/\r?\n/);
+  const headLine = lines[0];
+  const head = parseCSV(headLine)[0];
+  const items = []; let before = 0;
+  for (const raw of lines.slice(1)) {
+    if (!raw.trim()) continue;
+    const g = recGames([head, parseCSV(raw)[0]])[0];
+    if (!g) continue;
+    if (e.startDate && g.start.slice(0, 10) < e.startDate) { before++; continue; }   // 大会が始まる前の対局(同じロビーの別の大会など)は使わない
+    items.push({ raw, g });
+  }
+  // 置いてある対局記録の対局と、リーグごとの対局数
+  const known = new Map(), count = Array(L).fill(0);
+  for (const k of e.games) {
+    const ex = await recordLinks(REPO.team, gamesPath(e.id, k)) || [];
+    for (const g of ex) if (!known.has(g.link)) { known.set(g.link, k); if (!g.hidden && k <= L) count[k - 1]++; }
+  }
+  const full = (i) => e.planned[i] != null && count[i] >= e.planned[i];
+  let cur = 0;
+  for (const it of [...items].sort((a, b) => a.g.start.localeCompare(b.g.start) || a.g.link.localeCompare(b.g.link))) {
+    if (known.has(it.g.link)) { it.k = known.get(it.g.link); continue; }
+    while (cur < L - 1 && full(cur)) cur++;
+    it.k = cur + 1;
+    if (!it.g.hidden) count[cur]++;
+  }
+  const over = e.planned[L - 1] != null && count[L - 1] > e.planned[L - 1];
+  const byK = new Map();
+  for (const it of items) { if (!byK.has(it.k)) byK.set(it.k, []); byK.get(it.k).push(it); }   // 元の並びのまま
+  const summary = [...byK.keys()].sort((a, b) => a - b).map((k) => `${e.leagues[k - 1] || k + "次リーグ"} ${byK.get(k).length}`).join("、");
+  for (const k of [...byK.keys()].sort((a, b) => a - b)) {
+    const its = byK.get(k);
+    const textK = (hasBom ? "﻿" : "") + [headLine, ...its.map((it) => it.raw)].join(eol) + eol;
+    const p = { kind: "record", side: "team", repo: REPO.team, event: e, league: k, split: true, name, from: [name],
+      bytes: utf8.encode(textK), games: its.map((it) => it.g), msgs: [], include: true };
+    p.shown = p.games.filter((g) => !g.hidden);
+    addMsg(p, "i", `書き出しを1対局ずつリーグに分けた(${summary})。このファイルは ${e.leagues[k - 1] || k + "次リーグ"} の分。`);
+    if (before) addMsg(p, "w", `大会の開始日(${e.startDate})より前の対局が ${before} あったので、どのリーグにも入れなかった。`);
+    if (k === L && over) addMsg(p, "w", `${e.leagues[L - 1]} の対局数(${e.planned[L - 1]})を超えている。日程や対局記録を確かめる。`);
+    for (const s of stop) { addMsg(p, "e", s); p.blocked = true; p.include = false; }
+    p.baseMsgs = p.msgs.slice();
+    plans.push(p);
+    await refreshRecordPlan(p);
+  }
 }
 
 /* 行き先が決まった(変わった)対局記録の案を、置いてあるものと比べる */
@@ -355,8 +413,8 @@ async function refreshRecordPlan(p) {
     const e = p.event, plan = e.planned[p.league - 1];
     if (!e.games.includes(p.league)) addMsg(p, "i", `${e.leagues[p.league - 1] || p.league + "次リーグ"} の対局記録を新しく置く。`);
     const later = e.games.filter((n) => n > p.league);
-    if (later.length) addMsg(p, "w", "このリーグより後のリーグの対局記録がもう置いてある。終わったリーグを上書きすると、次のリーグの対局が前のリーグに数えられる。");
-    else if (plan && ex && ex.filter((g) => !g.hidden).length >= plan && p.added) addMsg(p, "w", `このリーグは対局数(${plan})に届いて終了している。次のリーグの対局なら、リーグを替える。`);
+    if (later.length && !p.same && !p.split) addMsg(p, "w", "このリーグより後のリーグの対局記録がもう置いてある。終わったリーグを上書きすると、次のリーグの対局が前のリーグに数えられる。");
+    else if (!p.split && plan && ex && ex.filter((g) => !g.hidden).length >= plan && p.added) addMsg(p, "w", `このリーグは対局数(${plan})に届いて終了している。次のリーグの対局なら、リーグを替える。`);
   } else {
     const later = store.months.filter((m) => m > p.month);
     if (later.length) addMsg(p, "i", `${p.month} より後の月(${later.join("、")})がもう置いてある。`);
@@ -533,6 +591,8 @@ function render() {
           const inp = el("input"); inp.type = "text"; inp.value = p.month; inp.size = 7; inp.className = "mono"; inp.setAttribute("aria-label", "月(YYYYMM)");
           inp.addEventListener("change", async () => { if (!/^\d{6}$/.test(inp.value)) { inp.value = p.month; return; } p.month = inp.value; p.include = !p.blocked; await refreshRecordPlan(p); await planSummaries(); render(); });
           lab.append(inp); ctl.append(lab);
+        } else if (p.split) {
+          ctl.append(el("span", "pickm", `${p.event.name} の ${p.event.leagues[p.league - 1] || p.league + "次リーグ"}`));
         } else {
           const sel = el("select"); sel.setAttribute("aria-label", "リーグ");
           p.event.leagues.forEach((L, i) => { const o = el("option", "", `${i + 1}: ${L}`); o.value = i + 1; if (i + 1 === p.league) o.selected = true; sel.append(o); });
