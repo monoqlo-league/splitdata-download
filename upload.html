@@ -73,6 +73,10 @@ body.dragging .drop:not(.off){border-color:var(--accent)}
 .msgs .w{color:var(--warn)}
 .msgs .e{color:var(--minus);font-weight:700}
 .msgs .i{color:var(--muted)}
+.kind{display:inline-flex;gap:8px;align-items:center;cursor:pointer;font-size:15px;font-weight:700;padding:8px 14px;border:1px solid var(--line);border-radius:8px}
+.kind:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.kind input{width:16px;height:16px;accent-color:var(--accent);margin:0}
+.kind .note{font-weight:400}
 .pickm{display:inline-flex;gap:6px;align-items:center;font-size:13px}
 .pickm input{width:7.5em}
 .ctl{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:13px}
@@ -104,8 +108,20 @@ footer p{margin:0}
   <p class="note">GitHub のログイン画面に移り、許可すると戻ってくる。上げられるのは、monoqlo-data と event-data に書き込める GitHub アカウントだけ。ログインは8時間ほどで切れるので、そのときはもう一度押す。コミットは、ログインした人の名前で残る。</p>
 </section>
 
+<section class="panel" id="kind-panel">
+  <h2>2. 個人戦かチーム戦か</h2>
+  <div class="row" role="radiogroup" aria-label="個人戦かチーム戦か">
+    <label class="kind"><input type="radio" name="kind" value="personal" disabled> 個人戦 <span class="note">(monoqlo-data)</span></label>
+    <label class="kind"><input type="radio" name="kind" value="team" disabled> チーム戦 <span class="note">(event-data)</span></label>
+  </div>
+  <div class="row" id="event-row" hidden>
+    <label class="pickm">大会 <select id="event-sel" aria-label="大会"></select></label>
+  </div>
+  <p class="note" id="kind-note">ログインすると選べる。選んだ種類のファイルとして上げる(中身で個人戦かチーム戦かを決めることはしない)。</p>
+</section>
+
 <section class="drop off" id="drop" aria-label="ファイルの置き場">
-  <b>2. ここにCSVを放り込む</b>
+  <b>3. ここにCSVを放り込む</b>
   <span class="note">何個でもまとめて入れられる。対局記録(牌譜履歴)と詳細成績(-summary.csv)を混ぜてもよい。</span>
   <button class="btn sub" id="pick" type="button">ファイルを選ぶ</button>
   <input type="file" id="file" accept=".csv,text/csv" multiple hidden>
@@ -118,12 +134,12 @@ footer p{margin:0}
   <span class="status" id="bar-text"></span>
   <span class="row">
     <button class="btn sub" id="clear" type="button">取り消す</button>
-    <button class="btn" id="upload" type="button">3. アップロード</button>
+    <button class="btn" id="upload" type="button">4. アップロード</button>
   </span>
 </div>
 
 <footer>
-  <p>対局記録は、書き出したファイルをそのまま上げる(中身は変えない)。行き先は中身から決める: 対局者が全員チーム戦の大会マスターにいればチーム戦、そうでなければ個人戦。</p>
+  <p>対局記録は、書き出したファイルをそのまま上げる(中身は変えない)。行き先は「2.」で選んだ種類で決まる。個人戦は対局の月、チーム戦はリーグ(置いてある対局記録と重なればそのリーグ、重ならなければ次のリーグ)。</p>
   <p>詳細成績は、ゲームIDで対局記録と照らし、その対局が入っている月・リーグの <code>summary</code> に合体する。すでにある対局は重ねない。中身が違う同じ対局は、元の方を残して知らせる。</p>
   <p>上げると、各リポジトリの自動処理(一覧の作り直し・点検・Discord への通知・分割CSVの追加)がいつもどおり動く。</p>
 </footer>
@@ -267,77 +283,48 @@ let pendingSummaries = [];   // 届いた詳細成績(合体はまとめて作�
 
 function addMsg(p, cls, text) { p.msgs.push([cls, text]); }
 
+/* いま選んでいる種類("personal" / "team")と大会 */
+let KIND = "", EVENT = null;
+
 async function planRecord(name, buf, text, rows) {
   const games = recGames(rows);
   const shown = games.filter((g) => !g.hidden);
-  const p = { kind: "record", name, from: [name], bytes: new Uint8Array(buf), games, shown, msgs: [], include: true };
+  const p = { kind: "record", name, from: [name], bytes: new Uint8Array(buf), games, shown, msgs: [], include: games.length > 0, side: KIND };
+  const block = (text) => { addMsg(p, "e", text); p.blocked = true; p.include = false; };
+  if (!games.length) addMsg(p, "e", "対局が1件も無い。");
+  // 取り違えの守り: 選んだ種類と逆の置き場にある対局が入っていたら上げない(種類を選び間違えたか、ファイルを取り違えた)
   const links = new Set(games.map((g) => g.link));
-  // 手がかり1: 置き場の対局記録と同じ対局が入っているか(いちばん確か)
-  p.pHit = []; p.tHit = [];
+  const pHit = [], tHit = [];
   for (const ym of store.months) {
     const ex = await recordLinks(REPO.personal, monthPath(ym));
     const c = ex ? ex.filter((g) => links.has(g.link)).length : 0;
-    if (c) p.pHit.push({ ym, c });
+    if (c) pHit.push(`${monthPath(ym)} に ${c} 対局`);
   }
   for (const e of store.events) for (const k of e.games) {
     const ex = await recordLinks(REPO.team, gamesPath(e.id, k));
     const c = ex ? ex.filter((g) => links.has(g.link)).length : 0;
-    if (c) p.tHit.push({ e, k, c });
+    if (c) tHit.push({ e, k, text: `${gamesPath(e.id, k)} に ${c} 対局` });
   }
-  // 手がかり2: 卓の顔ぶれ。チーム戦の卓は、名簿の4チームから1人ずつ。
-  // 名簿の人どうしの個人戦でも、同じチームの人が同じ卓にいる対局が1つでもあればチーム戦ではない
-  const teamTable = (e, g) => g.ids.every((id) => id && e.members.has(id)) && new Set(g.ids.map((id) => e.teamOf.get(id))).size === 4;
-  p.teamCands = store.events.filter((e) => shown.length && shown.every((g) => teamTable(e, g)));
-  p.teamTable = teamTable;
-  let side, why;
-  if (p.tHit.length && !p.pHit.length) { side = "team"; why = "置いてあるチーム戦の対局記録と同じ対局が入っている。"; }
-  else if (p.pHit.length && !p.tHit.length) { side = "personal"; why = "置いてある個人戦の対局記録と同じ対局が入っている。"; }
-  else if (p.tHit.length && p.pHit.length) { side = p.teamCands.length ? "team" : "personal"; why = ""; }
-  else if (p.teamCands.length) { side = "team"; why = "新しい対局だけ。すべての卓が、大会の名簿の4チームから1人ずつなのでチーム戦とみた。"; }
-  else { side = "personal"; why = "新しい対局だけ。名簿にいない人か、同じチームの人どうしが同じ卓にいる対局があるので個人戦とみた。"; }
-  p.why = why;
-  plans.push(p);
-  await setSide(p, side, false);
-}
-
-/* 個人戦・チーム戦を決めて(手で選び直したときも)、行き先と点検をやり直す */
-const NAME_PERSONAL = /^(\d{6})(?:\s*\(\d+\))?\.csv$/i;              // 202610.csv(ダウンロードで付く「 (1)」も許す)
-const NAME_TEAM = /^(\d{8})-games(\d+)(?:\s*\(\d+\))?\.csv$/i;      // 20260901-games2.csv
-async function setSide(p, side, manual) {
-  p.side = side; p.manual = manual; p.msgs = []; p.blocked = false; p.include = p.games.length > 0;
-  const block = (text) => { addMsg(p, "e", text); p.blocked = true; p.include = false; };
-  if (!p.games.length) addMsg(p, "e", "対局が1件も無い。");
-  if (manual) addMsg(p, "i", `${side === "team" ? "チーム戦" : "個人戦"}として扱う(手で選んだ)。`);
-  else if (p.why) addMsg(p, "i", p.why);
-  const mp = NAME_PERSONAL.exec(p.name), mt = NAME_TEAM.exec(p.name);
-  if (side === "team") {
-    p.repo = REPO.team;
-    const hit = p.tHit.length ? p.tHit[p.tHit.length - 1] : null;
-    const e = hit ? hit.e : p.teamCands.length ? p.teamCands[p.teamCands.length - 1] : store.events[store.events.length - 1];
-    if (!e) { block("チーム戦の大会マスターが置き場に無い。"); p.event = null; p.baseMsgs = p.msgs.slice(); return; }
-    p.event = e;
+  if (KIND === "team") {
+    p.repo = REPO.team; p.event = EVENT;
     // リーグ: 置いてある対局記録と重なるいちばん後のリーグ。重ならなければ、置いてある次のリーグ
-    const ks = p.tHit.filter((h) => h.e === e).map((h) => h.k);
-    p.league = ks.length ? Math.max(...ks) : Math.min((Math.max(0, ...e.games) || 0) + 1, e.leagues.length);
-    if (p.teamCands.length > 1) addMsg(p, "w", `対局者が複数の大会の名簿にいる。${e.id} にした。`);
-    const odd = p.shown.filter((g) => !p.teamTable(e, g)).length;
-    if (odd) addMsg(p, "w", `${odd} 対局は、名簿の4チームから1人ずつの卓になっていない(名簿にいない人か、同じチームの人が同じ卓にいる)。`);
-    if (mp) (manual ? (t) => addMsg(p, "w", t) : block)(`ファイル名は個人戦(${mp[1]})の形だが、${manual ? "チーム戦として扱う" : "中身はチーム戦(" + e.name + ")の対局記録。取り違えの恐れがあるので上げない。本当に個人戦なら、上の「種類」で個人戦を選ぶ"}。`);
-    if (mt && (mt[1] !== e.id || Number(mt[2]) !== p.league)) addMsg(p, "w", `ファイル名(${mt[1]}-games${mt[2]})と、行き先(${e.id}-games${p.league})が違う。リーグを確かめる。`);
-    if (p.pHit.length) block(`個人戦の対局が入っている(${p.pHit.map((h) => `${monthPath(h.ym)} に ${h.c} 対局`).join("、")})。チーム戦の対局記録には入れない。`);
+    const ks = tHit.filter((h) => h.e === EVENT).map((h) => h.k);
+    p.league = ks.length ? Math.max(...ks) : Math.min((Math.max(0, ...EVENT.games) || 0) + 1, EVENT.leagues.length);
+    if (pHit.length) block(`個人戦の対局が入っている(${pHit.join("、")})。チーム戦の対局記録には入れない。個人戦のファイルではないか、「2.」の選択を確かめる。`);
+    const other = tHit.filter((h) => h.e !== EVENT);
+    if (other.length) block(`別の大会の対局が入っている(${other.map((h) => h.text).join("、")})。「2.」の大会を確かめる。`);
   } else {
     p.repo = REPO.personal;
     const cnt = new Map();
-    for (const g of p.shown) { const m = /^(\d{4})-(\d{2})/.exec(g.start); if (m) cnt.set(m[1] + m[2], (cnt.get(m[1] + m[2]) || 0) + 1); }
+    for (const g of shown) { const m = /^(\d{4})-(\d{2})/.exec(g.start); if (m) cnt.set(m[1] + m[2], (cnt.get(m[1] + m[2]) || 0) + 1); }
     const best = [...cnt].sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))[0];
     p.month = best ? best[0] : "";
     if (cnt.size > 1) addMsg(p, "i", "開始時間の月: " + [...cnt].sort().map(([m, n]) => `${m.slice(0, 4)}/${m.slice(4)} ${n}対局`).join("、") + "。いちばん多い月にした。");
     if (!p.month) block("開始時間から月を決められない。");
-    if (mt) (manual ? (t) => addMsg(p, "w", t) : block)(`ファイル名はチーム戦(${mt[1]}-games${mt[2]})の形だが、${manual ? "個人戦として扱う" : "中身は個人戦の対局記録。取り違えの恐れがあるので上げない。本当にチーム戦なら、上の「種類」でチーム戦を選ぶ"}。`);
-    if (mp && p.month && mp[1] !== p.month) addMsg(p, "w", `ファイル名の月(${mp[1]})と、対局の月(${p.month})が違う。行き先は対局の月にした。`);
-    if (p.tHit.length) block(`チーム戦の対局が入っている(${p.tHit.map((h) => `${gamesPath(h.e.id, h.k)} に ${h.c} 対局`).join("、")})。個人戦の対局記録には入れない。チーム戦のファイルを取り違えていないか確かめる。`);
+    if (tHit.length) block(`チーム戦の対局が入っている(${tHit.map((h) => h.text).join("、")})。個人戦の対局記録には入れない。チーム戦のファイルではないか、「2.」の選択を確かめる。`);
   }
   p.baseMsgs = p.msgs.slice();
+  plans.push(p);
   await refreshRecordPlan(p);
 }
 
@@ -383,13 +370,13 @@ async function planSummaries() {
     for (const g of games) if (!g.hidden) { if (!where.has(g.link)) where.set(g.link, new Set()); where.get(g.link).add(key); }
   };
   const recPlans = plans.filter((p) => p.kind === "record" && p.include);
-  for (const ym of store.months) {
+  if (KIND === "personal") for (const ym of store.months) {
     const pl = recPlans.find((p) => p.side === "personal" && p.path === monthPath(ym));
     addTarget(REPO.personal, monthPath(ym), pl ? pl.games : await recordLinks(REPO.personal, monthPath(ym)), `summary/${ym}-summary.csv`, `個人 ${ym.slice(0, 4)}年${Number(ym.slice(4))}月`);
   }
-  for (const p of recPlans) if (p.side === "personal" && !store.months.includes(p.month))
+  if (KIND === "personal") for (const p of recPlans) if (p.side === "personal" && !store.months.includes(p.month))
     addTarget(REPO.personal, p.path, p.games, `summary/${p.month}-summary.csv`, `個人 ${p.month.slice(0, 4)}年${Number(p.month.slice(4))}月`);
-  for (const e of store.events) {
+  if (KIND === "team") for (const e of [EVENT]) {
     const ks = new Set([...e.games, ...recPlans.filter((p) => p.side === "team" && p.event === e).map((p) => p.league)]);
     for (const k of ks) {
       const pl = recPlans.find((p) => p.side === "team" && p.event === e && p.league === k);
@@ -460,7 +447,7 @@ async function planSummaries() {
   }
   if (nowhere.length || loose.length) {
     const p = { fromSum: true, kind: "note", msgs: [], include: false, from: [...new Set(pendingSummaries.map((s) => s.name))] };
-    if (nowhere.length) addMsg(p, "w", `${nowhere.length} 対局は、どの対局記録にも無い(非表示を含む)ので使わない。先に対局記録を上げると入る: ${nowhere.slice(0, 3).map((x) => x.slice(0, 15) + "…").join("、")}${nowhere.length > 3 ? " ほか" : ""}`);
+    if (nowhere.length) addMsg(p, "w", `${nowhere.length} 対局は、${KIND === "team" ? "この大会の" : "個人戦の"}どの対局記録にも無い(非表示を含む)ので使わない。種類の選び間違いか、まだ対局記録を上げていない対局: ${nowhere.slice(0, 3).map((x) => x.slice(0, 15) + "…").join("、")}${nowhere.length > 3 ? " ほか" : ""}`);
     for (const m of loose) addMsg(p, "w", m);
     plans.push(p);
   }
@@ -468,6 +455,7 @@ async function planSummaries() {
 
 async function takeFiles(list) {
   if (!TOKEN || !list.length) return;
+  if (!KIND || (KIND === "team" && !EVENT)) { $("load-status").textContent = "先に「2.」で個人戦かチーム戦かを選ぶ。"; $("load-status").className = "status err"; return; }
   $("load-status").textContent = "読んでいる…"; $("load-status").className = "status";
   try {
     await store.ready;
@@ -518,12 +506,7 @@ function render() {
     if (p.kind !== "note" && !p.done) {
       const ctl = el("div", "ctl");
       if (p.kind === "record") {
-        const ks = el("select"); ks.setAttribute("aria-label", "種類");
-        for (const [v, t] of [["personal", "個人戦"], ["team", "チーム戦"]]) { const o = el("option", "", t); o.value = v; if (v === p.side) o.selected = true; ks.append(o); }
-        ks.addEventListener("change", async () => { await setSide(p, ks.value, true); await planSummaries(); render(); });
-        const kl = el("label", "check"); kl.append("種類 ", ks); ctl.append(kl);
-        if (!p.event && p.side === "team") {}
-        else if (p.side === "personal") {
+        if (p.side === "personal") {
           const lab = el("label", "pickm"); lab.append("月 ");
           const inp = el("input"); inp.type = "text"; inp.value = p.month; inp.size = 7; inp.className = "mono"; inp.setAttribute("aria-label", "月(YYYYMM)");
           inp.addEventListener("change", async () => { if (!/^\d{6}$/.test(inp.value)) { inp.value = p.month; return; } p.month = inp.value; p.include = !p.blocked; await refreshRecordPlan(p); await planSummaries(); render(); });
@@ -580,7 +563,7 @@ async function upload() {
   $("bar-text").textContent = "上げている…";
   // 詳細成績は、置いてある最新の版から作り直してから上げる(ほかの人の更新を消さないため)
   files.clear();
-  try { await loadStore(); await planSummaries(); }
+  try { await loadStore(); if (KIND === "team" && EVENT) { const ne = store.events.find((e) => e.id === EVENT.id); if (ne) { for (const p of plans) if (p.event === EVENT) p.event = ne; EVENT = ne; } } await planSummaries(); }
   catch (e) { $("bar-text").textContent = "置き場を読み直せなかった: " + e.message; $("clear").disabled = false; render(); return; }
   const now = plans.filter((p) => p.kind !== "note" && p.include && !p.done);
   for (const repo of [REPO.personal, REPO.team]) {
@@ -596,7 +579,7 @@ async function upload() {
     }
   }
   files.clear();
-  store.ready = loadStore().catch(() => {});
+  store.ready = loadStore().then(() => { if (KIND === "team") EVENT = store.events.find((e) => e.id === (EVENT && EVENT.id)) || EVENT; }).catch(() => {});
   if (!plans.some((p) => p.kind === "summary" && !p.done && p.include)) pendingSummaries = [];
   $("clear").disabled = false;
   render();
@@ -609,7 +592,9 @@ function setAuth(text, cls) { $("auth-status").textContent = text; $("auth-statu
 function saveLogin(v) { try { if (v) localStorage.setItem(TOKEN_KEY, JSON.stringify(v)); else localStorage.removeItem(TOKEN_KEY); } catch (_) {} }
 function loadLogin() { try { return JSON.parse(localStorage.getItem(TOKEN_KEY) || "null"); } catch (_) { return null; } }
 function showLoggedOut(msg, cls) {
-  TOKEN = ""; $("login").hidden = false; $("who").hidden = true; $("logout").hidden = true; $("drop").classList.add("off");
+  TOKEN = ""; $("login").hidden = false; $("who").hidden = true; $("logout").hidden = true;
+  document.querySelectorAll('input[name=kind]').forEach((r) => { r.disabled = true; });
+  refreshDrop();
   setAuth(msg || "", cls);
 }
 async function useToken(t, login) {
@@ -622,10 +607,13 @@ async function useToken(t, login) {
     $("login").hidden = true; $("who").hidden = false; $("logout").hidden = false;
     $("who").textContent = me + " でログイン中";
     if (lack.length) { setAuth(`${lack.join("・")} に書き込む権限が無いアカウント。管理者のアカウントでログインし直す。`, "err"); return; }
-    setAuth("");
-    $("drop").classList.remove("off");
+    setAuth("読み込んでいる…");
     store.ready = loadStore();
     await store.ready;
+    setAuth("");
+    document.querySelectorAll('input[name=kind]').forEach((r) => { r.disabled = false; });
+    fillEvents();
+    refreshDrop();
     return me;
   } catch (e) {
     saveLogin(null);
@@ -661,6 +649,40 @@ async function finishLogin() {
   return true;
 }
 
+/* ---------- 個人戦かチーム戦か ---------- */
+function refreshDrop() {
+  const ok = !!TOKEN && (KIND === "personal" || (KIND === "team" && EVENT));
+  $("drop").classList.toggle("off", !ok);
+  $("kind-note").textContent = !TOKEN ? "ログインすると選べる。選んだ種類のファイルとして上げる(中身で個人戦かチーム戦かを決めることはしない)。"
+    : !KIND ? "どちらかを選ぶと、ファイルを入れられる。"
+    : KIND === "team" && !EVENT ? "チーム戦の大会マスターが置き場に無い。"
+    : KIND === "team" ? `チーム戦「${EVENT.name}」(${EVENT.id})の対局記録・詳細成績として上げる。` : "個人戦の対局記録・詳細成績として上げる。";
+}
+function fillEvents() {
+  const sel = $("event-sel"); sel.textContent = "";
+  for (const e of [...store.events].reverse()) { const o = el("option", "", `${e.id} ${e.name}`); o.value = e.id; sel.append(o); }
+  if (KIND === "team") EVENT = store.events.find((e) => e.id === sel.value) || null;
+}
+function resetPlans(why) {
+  if (plans.some((p) => !p.done) || pendingSummaries.length) {
+    plans = plans.filter((p) => p.done); pendingSummaries = [];
+    $("load-status").textContent = why; $("load-status").className = "status";
+    render();
+  }
+}
+document.querySelectorAll('input[name=kind]').forEach((r) => r.addEventListener("change", () => {
+  KIND = r.value;
+  $("event-row").hidden = KIND !== "team";
+  EVENT = KIND === "team" ? store.events.find((e) => e.id === $("event-sel").value) || null : null;
+  resetPlans("種類を替えたので、入れていたファイルは取り消した。もう一度入れる。");
+  refreshDrop();
+}));
+$("event-sel").addEventListener("change", () => {
+  EVENT = store.events.find((e) => e.id === $("event-sel").value) || null;
+  resetPlans("大会を替えたので、入れていたファイルは取り消した。もう一度入れる。");
+  refreshDrop();
+});
+
 /* ---------- ファイルの受け取り(選ぶ・放り込む) ---------- */
 $("pick").addEventListener("click", () => $("file").click());
 $("file").addEventListener("change", () => { const l = [...$("file").files]; $("file").value = ""; takeFiles(l); });
@@ -671,6 +693,7 @@ window.addEventListener("dragover", (e) => { e.preventDefault(); if (e.dataTrans
 window.addEventListener("drop", (e) => {   // 画面のどこに落としても受け取る
   e.preventDefault(); depth = 0; document.body.classList.remove("dragging"); $("drop").classList.remove("over");
   if (!TOKEN) { setAuth("先にログインする。", "err"); return; }
+  if (!KIND) { $("load-status").textContent = "先に「2.」で個人戦かチーム戦かを選ぶ。"; $("load-status").className = "status err"; return; }
   takeFiles([...(e.dataTransfer ? e.dataTransfer.files : [])].filter((f) => /\.csv$/i.test(f.name) || f.type === "text/csv"));
 });
 $("drop").addEventListener("dragover", () => $("drop").classList.add("over"));
