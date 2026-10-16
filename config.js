@@ -8,5 +8,5 @@ window.SPLITDATA_CONFIG = {
   uploadEndpoint: "",
   // ゲームデータのアップロード(upload.html)の「GitHubでログイン」。GitHub App の Client ID と、gas/Login.gs を公開したURL。
   githubClientId: "Iv23liNkQ0xAhkmZxkmP",
-  loginEndpoint: "",
+  loginEndpoint: "https://script.google.com/macros/s/AKfycbzUdkRnsADgn5DwhoGVXvicUOIdLNm_9IFO52INDmp1N8ZowpJYDDHMFHUZLBLHDpaB/exec",
 };
