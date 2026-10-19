@@ -128,7 +128,7 @@ footer p{margin:0}
 
 <section class="drop off" id="drop" aria-label="ファイルの置き場">
   <b>3. ここにCSVを放り込む</b>
-  <span class="note">何個でもまとめて入れられる。対局記録(牌譜履歴)・詳細成績(-summary.csv)・大会マスター・スケジュールを混ぜてもよい。大会マスターとスケジュールは、「2.」を選ばなくても入れられる。</span>
+  <span class="note">何個でもまとめて入れられる。対局記録(牌譜履歴)・詳細成績(-summary.csv)・大会マスター・スケジュールを混ぜてもよい。大会マスターとスケジュールは、「2.」でチーム戦を選んでから入れる。</span>
   <button class="btn sub" id="pick" type="button">ファイルを選ぶ</button>
   <input type="file" id="file" accept=".csv,text/csv" multiple hidden>
 </section>
@@ -746,6 +746,7 @@ async function takeFiles(list) {
     }
     got.sort((a, b) => a.rank - b.rank);
     for (const { f, buf, text, rows, h, type } of got) {
+      if (type && KIND !== "team") { plans.push({ kind: "note", from: [f.name], include: false, msgs: [["e", `${type === "master" ? "大会マスター" : "スケジュール"}は、先に「2.」でチーム戦を選んでから入れる。`]] }); continue; }
       if (type) { await planEventFile(f.name, buf, rows, type); continue; }
       const isRec = h.join(",") === REC_HEAD.join(","), isSum = h[0] === "ゲームID" && h.includes("名前") && h.includes("局数");
       if ((isRec || isSum) && (!KIND || (KIND === "team" && !EVENT))) { plans.push({ kind: "note", from: [f.name], include: false, msgs: [["e", "対局記録・詳細成績は、先に「2.」で個人戦かチーム戦か(チーム戦なら大会も)を選んでから入れる。"]] }); continue; }
@@ -990,12 +991,12 @@ async function finishLogin() {
 
 /* ---------- 個人戦かチーム戦か ---------- */
 function refreshDrop() {
-  const ok = !!TOKEN;   // 大会マスター・スケジュールは種類を選ばなくても入れられる(対局記録・詳細成績は takeFiles で確かめる)
+  const ok = !!TOKEN && (KIND === "personal" || KIND === "team");   // チーム戦は、大会が無くても大会マスター・スケジュールなら入れられる(対局記録・詳細成績は takeFiles で確かめる)
   $("drop").classList.toggle("off", !ok);
   $("kind-note").textContent = !TOKEN ? "ログインすると選べる。選んだ種類のファイルとして上げる(中身で個人戦かチーム戦かを決めることはしない)。"
-    : !KIND ? "対局記録・詳細成績は、どちらかを選んでから入れる(大会マスター・スケジュールは選ばなくてよい)。"
-    : KIND === "team" && !EVENT ? "チーム戦の大会マスターが置き場に無い。"
-    : KIND === "team" ? `チーム戦「${EVENT.name}」(${EVENT.id})の対局記録・詳細成績として上げる。` : "個人戦の対局記録・詳細成績として上げる。";
+    : !KIND ? "どちらかを選ぶと、ファイルを入れられる(大会マスター・スケジュールはチーム戦)。"
+    : KIND === "team" && !EVENT ? "チーム戦の大会マスターが置き場に無い。大会マスターを入れると大会ができる。"
+    : KIND === "team" ? `チーム戦「${EVENT.name}」(${EVENT.id})の対局記録・詳細成績として上げる。大会マスター・スケジュールも入れられる。` : "個人戦の対局記録・詳細成績として上げる。";
 }
 function fillEvents() {
   const sel = $("event-sel"), keep = sel.value; sel.textContent = "";
@@ -1033,6 +1034,7 @@ window.addEventListener("dragover", (e) => { e.preventDefault(); if (e.dataTrans
 window.addEventListener("drop", (e) => {   // 画面のどこに落としても受け取る
   e.preventDefault(); depth = 0; document.body.classList.remove("dragging"); $("drop").classList.remove("over");
   if (!TOKEN) { setAuth("先にログインする。", "err"); return; }
+  if (!KIND) { $("load-status").textContent = "先に「2.」で個人戦かチーム戦かを選ぶ。"; $("load-status").className = "status err"; return; }
   takeFiles([...(e.dataTransfer ? e.dataTransfer.files : [])].filter((f) => /\.csv$/i.test(f.name) || f.type === "text/csv"));
 });
 $("drop").addEventListener("dragover", () => $("drop").classList.add("over"));
