@@ -100,7 +100,7 @@ footer p{margin:0}
 <header>
   <div class="eyebrow">MONOQLO麻雀部 管理者用</div>
   <h1>ゲームデータのアップロード</h1>
-  <p class="lead">雀魂から書き出した対局記録と、拡張機能が出力した詳細成績(-summary.csv)を、個人戦・チーム戦どちらも、ここに入れるだけで置き場へ上げる。中身を読んで、行き先と名前を自動で決める。</p>
+  <p class="lead">雀魂から書き出した対局記録と、拡張機能が出力した詳細成績(-summary.csv)を、個人戦・チーム戦どちらも、ここに入れるだけで置き場へ上げる。チーム戦の大会マスター(-master.csv)とスケジュール(-schedule.csv)も入れられる。中身を読んで、行き先と名前を自動で決める。</p>
 </header>
 
 <section class="panel" id="auth">
@@ -128,7 +128,7 @@ footer p{margin:0}
 
 <section class="drop off" id="drop" aria-label="ファイルの置き場">
   <b>3. ここにCSVを放り込む</b>
-  <span class="note">何個でもまとめて入れられる。対局記録(牌譜履歴)と詳細成績(-summary.csv)を混ぜてもよい。</span>
+  <span class="note">何個でもまとめて入れられる。対局記録(牌譜履歴)・詳細成績(-summary.csv)・大会マスター・スケジュールを混ぜてもよい。大会マスターとスケジュールは、「2.」を選ばなくても入れられる。</span>
   <button class="btn sub" id="pick" type="button">ファイルを選ぶ</button>
   <input type="file" id="file" accept=".csv,text/csv" multiple hidden>
 </section>
@@ -147,6 +147,7 @@ footer p{margin:0}
 <footer>
   <p>対局記録は、書き出したファイルをそのまま上げる(中身は変えない)。行き先は「2.」で選んだ種類で決まる。個人戦は対局の月、チーム戦はリーグ(置いてある対局記録と重なればそのリーグ、重ならなければ次のリーグ)。</p>
   <p>詳細成績は、ゲームIDで対局記録と照らし、その対局が入っている月・リーグの <code>summary</code> に合体する。すでにある対局は重ねない。中身が違う同じ対局は、元の方を残して知らせる。</p>
+  <p>大会マスター・スケジュールは、ファイルの中身をそのまま event-data に置く。名前(大会番号 YYYYMMXX)は、ファイル名にあればそれ、無ければ大会名が同じ大会、それも無ければ今月の空いている番号にする(変えられる)。置いてある版と違うところは、上げる前に知らせる。</p>
   <p>上げると、各リポジトリの自動処理(一覧の作り直し・点検・Discord への通知・分割CSVの追加)がいつもどおり動く。</p>
 </footer>
 </div>
@@ -311,6 +312,124 @@ function warmRecords() {
 async function recordLinks(repo, path) {
   const f = await readFile(repo, path);
   return f ? recGames(f.rows) : null;
+}
+
+/* ---------- 大会マスター・スケジュール ----------
+   中身はそのまま event-data の YYYYMMXX-master.csv / -schedule.csv に置く。
+   大会番号: ファイル名にあればそれ。無ければ大会名が同じ大会(置き場、またはいっしょに入れた大会マスター)。
+   それも無い大会マスターは、今月の空いている番号。スケジュールは、選んでいる大会 */
+const MASTER_HEAD = ["大会名","チーム名","プレイヤー名","プレイヤーID","役割","リーグ構成"];
+const SCHED_HEAD = ["大会名","リーグ","チーム","対局数","開始日"];
+const leaguesOf = (spec) => (spec || "").split("/").map((x) => x.split(":")[0].trim()).filter(Boolean);
+function nextKey() {
+  const d = new Date(Date.now() + 9 * 3600e3), ym = d.getUTCFullYear() + String(d.getUTCMonth() + 1).padStart(2, "0");
+  const used = new Set([...store.events.map((e) => e.id), ...plans.filter((q) => q.kind === "master" && !q.done).map((q) => q.key)]);
+  for (let i = 1; i < 100; i++) { const k = ym + String(i).padStart(2, "0"); if (!used.has(k)) return k; }
+  return "";
+}
+/* 大会マスターの中身 → {title, teams:Map(チーム→[ID]), ids:Map(ID→{name,team}), leagues} */
+function readMaster(head, rows) {
+  const ci = (n) => head.indexOf(n), out = { title: "", teams: new Map(), ids: new Map(), leagues: [], dupIds: [], specs: new Set(), titles: new Set(), badIds: 0 };
+  for (const r of rows) {
+    const t = (r[ci("チーム名")] || "").trim(), id = (r[ci("プレイヤーID")] || "").trim(), nm = (r[ci("プレイヤー名")] || "").trim();
+    out.titles.add((r[ci("大会名")] || "").trim()); out.specs.add((r[ci("リーグ構成")] || "").trim());
+    if (!t) continue;
+    if (!out.teams.has(t)) out.teams.set(t, []);
+    if (id) { if (out.ids.has(id)) out.dupIds.push(id); out.ids.set(id, { name: nm, team: t }); out.teams.get(t).push(id); if (!/^\d+$/.test(id)) out.badIds++; }
+  }
+  out.title = [...out.titles][0] || "";
+  out.leagues = leaguesOf([...out.specs][0]);
+  return out;
+}
+async function planEventFile(name, buf, rows, type) {
+  const head = rows[0].map((x) => x.trim()), body = rows.slice(1).filter((r) => r.some((c) => (c || "").trim()));
+  const title = ((body[0] || [])[head.indexOf("大会名")] || "").trim();
+  const p = { kind: type, side: "team", repo: REPO.team, name, from: [name], bytes: new Uint8Array(buf), head, rows: body, title, msgs: [], include: true };
+  const fm = /(\d{8})-(master|schedule)\.csv$/i.exec(name);
+  const same = store.events.filter((e) => e.name === title);
+  const batch = plans.find((q) => q.kind === "master" && !q.done && q.title === title && q.key);
+  if (fm && fm[2].toLowerCase() === type) { p.key = fm[1]; p.keyWhy = "ファイル名から"; }
+  else if (same.length === 1) { p.key = same[0].id; p.keyWhy = `大会名が同じ大会(${same[0].id})`; }
+  else if (batch) { p.key = batch.key; p.keyWhy = "いっしょに入れた大会マスターと同じ大会"; }
+  else if (type === "master") { p.key = nextKey(); p.keyWhy = "新しい大会(今月の空いている番号)"; }
+  else if (KIND === "team" && EVENT) { p.key = EVENT.id; p.keyWhy = "「2.」で選んでいる大会"; }
+  else { p.key = ""; p.keyWhy = ""; }
+  plans.push(p);
+  await refreshEventPlan(p);
+}
+async function refreshEventPlan(p) {
+  p.msgs = []; p.blocked = false; p.needOk = false;
+  const err = (t) => { addMsg(p, "e", t); p.blocked = true; };
+  if (!/^\d{8}$/.test(p.key || "")) { p.path = ""; err("大会番号(YYYYMMXX の8けた)を下で入れる。"); p.include = false; return; }
+  p.path = `${p.key}-${p.kind}.csv`;
+  if (p.keyWhy) addMsg(p, "i", `大会番号は ${p.key}(${p.keyWhy})。`);
+  const need = p.kind === "master" ? MASTER_HEAD : SCHED_HEAD, miss = need.filter((n) => !p.head.includes(n));
+  if (miss.length) err("必要な列がない: " + miss.join("、"));
+  if (!p.rows.length) err("中身が空。");
+  const ev = store.events.find((e) => e.id === p.key);
+  const exFile = shas.has(REPO.team + ":" + p.path) ? await readFile(REPO.team, p.path) : null;
+  p.exists = !!exFile;
+  const newText = new TextDecoder("utf-8").decode(p.bytes).replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").trim();
+  if (exFile && exFile.text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").trim() === newText) { addMsg(p, "i", "置いてある版と同じ中身。上げなくてよい。"); p.same = true; }
+  else p.same = false;
+  if (p.kind === "master" && !miss.length) {
+    const M = readMaster(p.head, p.rows);
+    p.facts = [["チーム", M.teams.size], ["プレイヤー", M.ids.size], ["リーグ", M.leagues.join("・") || "—"]];
+    if (M.titles.size > 1) addMsg(p, "w", "大会名が行によって違う: " + [...M.titles].join("、"));
+    if (M.specs.size > 1) addMsg(p, "w", "リーグ構成が行によって違う。1行目のものを使う。");
+    if (!M.leagues.length) err("リーグ構成が読めない(例: 予選:12/セミファイナル:8:50/ファイナル:4:50)。");
+    if (M.dupIds.length) err("同じプレイヤーIDが2回出てくる: " + [...new Set(M.dupIds)].slice(0, 5).join("、"));
+    if (M.badIds) addMsg(p, "w", `プレイヤーIDが数字でない行が ${M.badIds} ある。`);
+    const small = [...M.teams].filter(([, ids]) => !ids.length).map(([t]) => t);
+    if (small.length) addMsg(p, "w", "プレイヤーのいないチームがある: " + small.join("、"));
+    if (ev) {
+      if (ev.name !== M.title) { addMsg(p, "e", `置いてある ${p.path} は別の大会(「${ev.name}」)。上書きすると、その大会が「${M.title}」に替わる。番号を確かめる。`); p.needOk = true; }
+      const oldTeams = new Set(ev.teamOf.values()), newTeams = new Set(M.teams.keys());
+      const goneT = [...oldTeams].filter((t) => !newTeams.has(t)), addT = [...newTeams].filter((t) => !oldTeams.has(t));
+      const goneP = [...ev.teamOf.keys()].filter((id) => !M.ids.has(id)), addP = [...M.ids.keys()].filter((id) => !ev.teamOf.has(id));
+      const moved = [...M.ids].filter(([id, v]) => ev.teamOf.has(id) && ev.teamOf.get(id) !== v.team).length;
+      const renamed = [...M.ids].filter(([id, v]) => ev.nameOf.has(id) && ev.nameOf.get(id) !== v.name).length;
+      const ch = [];
+      if (addT.length) ch.push(`チームが増える(${addT.join("、")})`);
+      if (goneT.length) ch.push(`チームが無くなる(${goneT.join("、")})`);
+      if (addP.length) ch.push(`プレイヤーが ${addP.length} 人増える`);
+      if (goneP.length) ch.push(`プレイヤーが ${goneP.length} 人いなくなる`);
+      if (moved) ch.push(`${moved} 人の所属チームが変わる`);
+      if (renamed) ch.push(`${renamed} 人の名前が変わる`);
+      if (ev.leagues.join("/") !== M.leagues.join("/")) ch.push(`リーグ構成が変わる(${ev.leagues.join("・")} → ${M.leagues.join("・")})`);
+      if (ch.length && !p.same) addMsg(p, ev.games.length && (goneT.length || goneP.length || moved) ? "w" : "i", "置いてある版から: " + ch.join("、") + "。" + (ev.games.length ? "対局記録がもうある大会なので、ランキングの集計が変わる。" : ""));
+    } else addMsg(p, "i", "新しい大会として置く。");
+  }
+  if (p.kind === "schedule" && !miss.length) {
+    const ci = (n) => p.head.indexOf(n);
+    const lgs = [...new Set(p.rows.map((r) => (r[ci("リーグ")] || "").trim()).filter(Boolean))];
+    p.facts = [["リーグ", lgs.join("・") || "—"], ["行", p.rows.length]];
+    // 大会マスター(いっしょに入れたもの、無ければ置き場)
+    const bm = plans.find((q) => q.kind === "master" && !q.done && q.key === p.key && q.include);
+    const M = bm ? readMaster(bm.head, bm.rows) : null;
+    const leagues = M ? M.leagues : ev ? ev.leagues : null, teams = M ? new Set(M.teams.keys()) : ev ? new Set(ev.teamOf.values()) : null;
+    const mtitle = M ? M.title : ev ? ev.name : "";
+    if (!leagues) err(`大会マスター(${p.key}-master.csv)が置き場に無い。先に(またはいっしょに)大会マスターを入れる。`);
+    else {
+      if (mtitle && p.title && mtitle !== p.title) addMsg(p, "w", `大会名が大会マスター(「${mtitle}」)と違う。`);
+      const odd = lgs.filter((l) => !leagues.includes(l));
+      if (odd.length) err(`大会マスターのリーグ構成(${leagues.join("・")})に無いリーグがある: ${odd.join("、")}`);
+      const first = p.rows.filter((r) => (r[ci("リーグ")] || "").trim() === leagues[0]).map((r) => (r[ci("チーム")] || "").trim());
+      const unknown = first.filter((t) => t && !teams.has(t));
+      if (unknown.length) err(`${leagues[0]} に、大会マスターに無いチームがある: ${unknown.join("、")}`);
+      const missing = [...teams].filter((t) => first.length && !first.includes(t));
+      if (missing.length) addMsg(p, "w", `${leagues[0]} に、大会マスターのチームが入っていない: ${missing.join("、")}`);
+    }
+    // 対局記録があるリーグの日程が変わるか
+    if (exFile && ev && ev.games.length && !p.same) {
+      const eh = exFile.rows[0].map((x) => x.trim()), eci = (n) => eh.indexOf(n);
+      const pick = (rows, idx, L) => rows.filter((r) => (r[idx("リーグ")] || "").trim() === L).map((r) => r.map((c) => (c || "").trim()).join(",")).sort().join("\n");
+      const changed = ev.games.map((k) => ev.leagues[k - 1]).filter((L) => L && pick(exFile.rows.slice(1), eci, L) !== pick(p.rows, ci, L));
+      if (changed.length) addMsg(p, "w", `対局記録がもうあるリーグ(${changed.join("、")})の日程が、置いてある版と違う。終了の判定や、ダウンロードページの開催日ごとのCSVに効く。`);
+    }
+    if (!exFile && !p.blocked) addMsg(p, "i", "この大会のスケジュールを新しく置く。");
+  }
+  p.include = !p.blocked && !p.needOk && !p.same;
 }
 
 /* ---------- 取り込んだファイル → 書き込みの案 ---------- */
@@ -613,17 +732,26 @@ async function planSummaries() {
 
 async function takeFiles(list) {
   if (!TOKEN || !list.length) return;
-  if (!KIND || (KIND === "team" && !EVENT)) { $("load-status").textContent = "先に「2.」で個人戦かチーム戦かを選ぶ。"; $("load-status").className = "status err"; return; }
   $("load-status").textContent = "読んでいる…"; $("load-status").className = "status";
   try {
     await store.ready;
+    // 先に全部読み、大会マスター → スケジュール → そのほか の順に扱う(スケジュールは大会マスターを見て点検するため)
+    const got = [];
     for (const f of list) {
       const buf = await f.arrayBuffer(), text = decode(buf);
       if (text == null) { plans.push({ kind: "note", from: [f.name], include: false, msgs: [["e", "UTF-8 ではないので読めない。"]] }); continue; }
       const rows = parseCSV(text), h = (rows[0] || []).map((s) => s.trim());
-      if (h.join(",") === REC_HEAD.join(",")) await planRecord(f.name, buf, text, rows);
+      const isMaster = MASTER_HEAD.every((n) => h.includes(n)), isSched = !isMaster && SCHED_HEAD.every((n) => h.includes(n)) && h.some((n) => /^第\d+戦$/.test(n));
+      got.push({ f, buf, text, rows, h, rank: isMaster ? 0 : isSched ? 1 : 2, type: isMaster ? "master" : isSched ? "schedule" : "" });
+    }
+    got.sort((a, b) => a.rank - b.rank);
+    for (const { f, buf, text, rows, h, type } of got) {
+      if (type) { await planEventFile(f.name, buf, rows, type); continue; }
+      const isRec = h.join(",") === REC_HEAD.join(","), isSum = h[0] === "ゲームID" && h.includes("名前") && h.includes("局数");
+      if ((isRec || isSum) && (!KIND || (KIND === "team" && !EVENT))) { plans.push({ kind: "note", from: [f.name], include: false, msgs: [["e", "対局記録・詳細成績は、先に「2.」で個人戦かチーム戦か(チーム戦なら大会も)を選んでから入れる。"]] }); continue; }
+      if (isRec) await planRecord(f.name, buf, text, rows);
       else if (h[0] === "ゲームID" && h.includes("名前") && h.includes("局数")) pendingSummaries.push({ name: f.name, rows });
-      else plans.push({ kind: "note", from: [f.name], include: false, msgs: [["e", "対局記録(牌譜履歴)でも詳細成績(-summary.csv)でもない。"]] });
+      else plans.push({ kind: "note", from: [f.name], include: false, msgs: [["e", "対局記録(牌譜履歴)・詳細成績(-summary.csv)・大会マスター・スケジュールのどれでもない。"]] });
     }
     await planSummaries();
     $("load-status").textContent = "";
@@ -647,7 +775,7 @@ async function dismiss(p) {
 function render() {
   const host = $("plans"); host.textContent = "";
   host.style.display = "grid"; host.style.gap = "12px";
-  const order = { record: 0, summary: 1, note: 2 };
+  const order = { master: -2, schedule: -1, record: 0, summary: 1, note: 2 };
   plans.sort((a, b) => order[a.kind] - order[b.kind]);
   for (const p of plans) {
     const bad = p.msgs.some((m) => m[0] === "e"), warn = p.msgs.some((m) => m[0] === "w");
@@ -658,8 +786,9 @@ function render() {
     card.append(x);
     const head = el("div", "chead");
     if (p.kind !== "note") {
-      head.append(el("span", "tag" + (p.side === "team" ? " team" : ""), (p.side === "team" ? "チーム戦" : "個人戦") + "・" + (p.kind === "record" ? "対局記録" : "詳細成績")));
-      head.append(el("span", "dest", `${p.repo}/${p.path}`));
+      const KN = { record: "対局記録", summary: "詳細成績", master: "大会マスター", schedule: "スケジュール" };
+      head.append(el("span", "tag" + (p.side === "team" ? " team" : ""), (p.side === "team" ? "チーム戦" : "個人戦") + "・" + KN[p.kind]));
+      head.append(el("span", "dest", p.path ? `${p.repo}/${p.path}` : `${p.repo}/(大会番号を入れる)`));
     } else head.append(el("span", "tag", "使わないもの"));
     card.append(head);
     card.append(el("div", "from", "もと: " + p.from.join("、")));
@@ -668,6 +797,10 @@ function render() {
     if (p.kind === "record") {
       fact("対局", p.games.length);
       if (p.exists) { fact("新しい対局", p.added); if (p.removed) fact("消える対局", p.removed); } else facts.append(el("span", "", "新しいファイル"));
+    } else if (p.kind === "master" || p.kind === "schedule") {
+      if (p.title) facts.append(el("span", "", p.title));
+      for (const [l, v] of p.facts || []) fact(l, v);
+      if (p.path) facts.append(el("span", "", p.exists ? (p.same ? "置いてある版と同じ" : "置いてある版を上書き") : "新しいファイル"));
     } else if (p.kind === "summary") {
       fact("足す対局", p.added); if (p.same) fact("すでにある", p.same); fact("合体後", `${p.have} / ${p.total}`);
       facts.append(el("span", "", p.label));
@@ -677,7 +810,17 @@ function render() {
 
     if (p.kind !== "note" && !p.done) {
       const ctl = el("div", "ctl");
-      if (p.kind === "record") {
+      if (p.kind === "master" || p.kind === "schedule") {
+        const lab = el("label", "pickm"); lab.append("大会番号 ");
+        const inp = el("input"); inp.type = "text"; inp.value = p.key || ""; inp.size = 9; inp.maxLength = 8; inp.className = "mono"; inp.placeholder = "YYYYMMXX"; inp.setAttribute("aria-label", "大会番号(YYYYMMXX)");
+        inp.addEventListener("change", async () => {
+          const v = inp.value.trim(); if (v && !/^\d{8}$/.test(v)) { inp.value = p.key || ""; return; }
+          p.key = v; p.keyWhy = ""; await refreshEventPlan(p);
+          for (const q of plans) if (q !== p && q.kind === "schedule" && !q.done) await refreshEventPlan(q);   // 大会マスターの番号はスケジュールの点検に効く
+          render();
+        });
+        lab.append(inp); ctl.append(lab);
+      } else if (p.kind === "record") {
         if (p.side === "personal") {
           const lab = el("label", "pickm"); lab.append("月 ");
           const inp = el("input"); inp.type = "text"; inp.value = p.month; inp.size = 7; inp.className = "mono"; inp.setAttribute("aria-label", "月(YYYYMM)");
@@ -758,13 +901,14 @@ async function upload() {
   $("upload").disabled = true; $("clear").disabled = true;
   $("bar-text").textContent = "上げている…";
   // 詳細成績は、置いてある最新の版から作り直してから上げる(ほかの人の更新を消さないため。変わったファイルだけ読み直す)
-  try { await loadStore(); if (KIND === "team" && EVENT) { const ne = store.events.find((e) => e.id === EVENT.id); if (ne) { for (const p of plans) if (p.event === EVENT) p.event = ne; EVENT = ne; } } await planSummaries(); }
+  try { await loadStore(); for (const p of plans) if ((p.kind === "master" || p.kind === "schedule") && !p.done && p.include) { await refreshEventPlan(p); }
+    if (KIND === "team" && EVENT) { const ne = store.events.find((e) => e.id === EVENT.id); if (ne) { for (const p of plans) if (p.event === EVENT) p.event = ne; EVENT = ne; } } await planSummaries(); }
   catch (e) { $("bar-text").textContent = "置き場を読み直せなかった: " + e.message; $("clear").disabled = false; render(); return; }
   const now = plans.filter((p) => p.kind !== "note" && p.include && !p.done);
   for (const repo of [REPO.personal, REPO.team]) {
     const mine = now.filter((p) => p.repo === repo);
     if (!mine.length) continue;
-    const items = mine.map((p) => ({ path: p.path, bytes: p.kind === "record" ? p.bytes : utf8.encode(p.text) }));
+    const items = mine.map((p) => ({ path: p.path, bytes: p.bytes || utf8.encode(p.text) }));
     const names = mine.map((p) => p.path.replace(/^summary\//, "")).join("、");
     try {
       const c = await commit(repo, items, `${names} を更新(アップロードページから)`);
@@ -773,7 +917,7 @@ async function upload() {
       for (const p of mine) p.result = { ok: false, text: "上げられなかった: " + e.message + (e.status === 401 ? "(ログインが切れた。もう一度ログインする)" : e.status === 403 || e.status === 404 ? "(このアカウントか GitHub App に、このリポジトリへの書き込み権限が無い)" : "") };
     }
   }
-  store.ready = loadStore().then(() => { if (KIND === "team") EVENT = store.events.find((e) => e.id === (EVENT && EVENT.id)) || EVENT; }).catch(() => {});
+  store.ready = loadStore().then(() => { fillEvents(); if (KIND === "team") EVENT = store.events.find((e) => e.id === (EVENT && EVENT.id)) || EVENT; refreshDrop(); }).catch(() => {});
   if (!plans.some((p) => p.kind === "summary" && !p.done && p.include)) pendingSummaries = [];
   $("clear").disabled = false;
   render();
@@ -846,16 +990,17 @@ async function finishLogin() {
 
 /* ---------- 個人戦かチーム戦か ---------- */
 function refreshDrop() {
-  const ok = !!TOKEN && (KIND === "personal" || (KIND === "team" && EVENT));
+  const ok = !!TOKEN;   // 大会マスター・スケジュールは種類を選ばなくても入れられる(対局記録・詳細成績は takeFiles で確かめる)
   $("drop").classList.toggle("off", !ok);
   $("kind-note").textContent = !TOKEN ? "ログインすると選べる。選んだ種類のファイルとして上げる(中身で個人戦かチーム戦かを決めることはしない)。"
-    : !KIND ? "どちらかを選ぶと、ファイルを入れられる。"
+    : !KIND ? "対局記録・詳細成績は、どちらかを選んでから入れる(大会マスター・スケジュールは選ばなくてよい)。"
     : KIND === "team" && !EVENT ? "チーム戦の大会マスターが置き場に無い。"
     : KIND === "team" ? `チーム戦「${EVENT.name}」(${EVENT.id})の対局記録・詳細成績として上げる。` : "個人戦の対局記録・詳細成績として上げる。";
 }
 function fillEvents() {
-  const sel = $("event-sel"); sel.textContent = "";
+  const sel = $("event-sel"), keep = sel.value; sel.textContent = "";
   for (const e of [...store.events].reverse()) { const o = el("option", "", `${e.id} ${e.name}`); o.value = e.id; sel.append(o); }
+  if (keep && store.events.some((e) => e.id === keep)) sel.value = keep;
   if (KIND === "team") EVENT = store.events.find((e) => e.id === sel.value) || null;
 }
 function resetPlans(why) {
@@ -888,7 +1033,6 @@ window.addEventListener("dragover", (e) => { e.preventDefault(); if (e.dataTrans
 window.addEventListener("drop", (e) => {   // 画面のどこに落としても受け取る
   e.preventDefault(); depth = 0; document.body.classList.remove("dragging"); $("drop").classList.remove("over");
   if (!TOKEN) { setAuth("先にログインする。", "err"); return; }
-  if (!KIND) { $("load-status").textContent = "先に「2.」で個人戦かチーム戦かを選ぶ。"; $("load-status").className = "status err"; return; }
   takeFiles([...(e.dataTransfer ? e.dataTransfer.files : [])].filter((f) => /\.csv$/i.test(f.name) || f.type === "text/csv"));
 });
 $("drop").addEventListener("dragover", () => $("drop").classList.add("over"));
