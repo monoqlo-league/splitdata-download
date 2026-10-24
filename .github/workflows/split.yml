@@ -11,6 +11,7 @@ on:
     types: [monoqlo-data-updated, event-data-updated]
   schedule:
     - cron: "17 19 * * *" # 毎日 4:17(日本時間)
+    - cron: "3 17 27-30 * *" # 28〜31日の 2:03(日本時間)。月の最終日なら、その月の端数も出す
   workflow_dispatch:
 
 concurrency:
@@ -37,6 +38,8 @@ jobs:
           path: _event
       - name: 分割する
         id: split
+        env:
+          SPLIT_FLUSH: ${{ github.event.schedule == '3 17 27-30 * *' && '1' || '' }}
         run: python3 tools/split-new.py _data _event
       - name: チーム戦を開催日ごとに分ける
         id: event
