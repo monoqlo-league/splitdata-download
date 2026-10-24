@@ -3,7 +3,9 @@
 #
 # - すでにある分割CSVは書き換えない。入っている対局(牌譜リンクで見る)は二度と出さない。
 #   同じ対局記録が何度アップロードされても、同じ対局が別のファイルに重なって入ることはない。
-# - 10対局に満たない残りは出さない。次のアップロードで10対局に達したときに出す。
+# - 10対局に満たない残りは、その月のうちは出さない。次のアップロードで10対局に達したときに出す。
+#   月が終わったら(日本時間で翌月1日以降)、10対局に満たない残りもまとめて1ファイルにして出す。
+#   その後に遅れて対局が上がった場合も、同じように残りを出す(10対局ずつ、端数は端数で)。
 # - 対象は FROM_MONTH 以降の月だけ。それより前の月は手作業で分割済み。
 # - 非表示状態が no でない対局は入れない。
 # - チーム戦の対局は入れない。event-data の対局記録(*-gamesN.csv)にある対局(牌譜リンクで見る)は飛ばす。
@@ -15,6 +17,7 @@
 # 使い方: リポジトリの直下で  python3 tools/split-new.py <monoqlo-data のフォルダ> [<event-data のフォルダ>]
 # 終わったら node tools/build-manifest.js で files.json も作り直す(ワークフローがやる)。
 import csv
+import datetime
 import io
 import os
 import re
@@ -23,6 +26,8 @@ import sys
 FROM_MONTH = os.environ.get("SPLIT_FROM_MONTH", "202610")
 GAMES_PER_FILE = 10
 MISSING_LIMIT = 10
+# 今の月(日本時間)。これより前の月は終わっているので、端数も出す。SPLIT_NOW_MONTH で変えられる(確かめ用)
+NOW_MONTH = os.environ.get("SPLIT_NOW_MONTH") or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime("%Y%m")
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "..", "monoqlo-data")
@@ -100,6 +105,9 @@ for name in sorted(os.listdir(data)):
     new.sort(key=lambda r: (r[i_start], r[i_link]))
 
     count = len(new) // GAMES_PER_FILE
+    closed = month < NOW_MONTH
+    if closed and len(new) % GAMES_PER_FILE:
+        count += 1   # 終わった月は、端数も1ファイルにする
     for j in range(count):
         chunk = new[j * GAMES_PER_FILE:(j + 1) * GAMES_PER_FILE]
         last += 1
@@ -112,10 +120,10 @@ for name in sorted(os.listdir(data)):
         with open(os.path.join(folder, out), "w", encoding="utf-8-sig", newline="") as f:
             f.write(buf.getvalue())
         made.append(f"{month}/{out}")
-    rest = len(new) - count * GAMES_PER_FILE
+    rest = max(0, len(new) - count * GAMES_PER_FILE)
     if skipped:
         print(f"::warning::{name}: チーム戦の対局が{skipped}対局入っていたため、分割に入れなかった")
-    print(f"{month}: 新しい対局 {len(new)} → {count}ファイル作成、{rest}対局は次回へ")
+    print(f"{month}: 新しい対局 {len(new)} → {count}ファイル作成、{rest}対局は次回へ" + ("(終わった月なので端数も出した)" if closed and len(new) % GAMES_PER_FILE else ""))
 
 print(f"作成: {len(made)}ファイル")
 for p in made:
