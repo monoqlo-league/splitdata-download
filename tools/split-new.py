@@ -1,4 +1,4 @@
-# 対局記録のCSV(monoqlo-data の YYYYMM.csv)から、まだ分割CSVに入っていない対局を
+# 対局記録のCSV(ranking の YYYYMM.csv)から、まだ分割CSVに入っていない対局を
 # 開始時間の古い順に10対局ずつ切り出して、YYYYMM/YYYYMM-連番.csv として足す。
 #
 # - すでにある分割CSVは書き換えない。入っている対局(牌譜リンクで見る)は二度と出さない。
@@ -13,9 +13,9 @@
 #   event-data のフォルダは2つめの引数か、環境変数 EVENT_DATA で渡す(ワークフローが取ってくる)。
 # - 月のCSVが、すでに分割した対局を MISSING_LIMIT 対局以上なくしていたら、その月は分割しない。
 #   個人戦の月のCSVは、毎回その月の全対局を入れて上書きするので、ふつうは対局が減らない。
-#   チーム戦の対局記録や別の月のCSVを誤って上げたときに、このきまりで止まる(monoqlo-data 側の点検が Discord に知らせる)。
+#   チーム戦の対局記録や別の月のCSVを誤って上げたときに、このきまりで止まる(ranking 側の点検が Discord に知らせる)。
 #
-# 使い方: リポジトリの直下で  python3 tools/split-new.py <monoqlo-data のフォルダ> [<event-data のフォルダ>]
+# 使い方: リポジトリの直下で  python3 tools/split-new.py <ranking のフォルダ> [<event-data のフォルダ>]
 # 終わったら node tools/build-manifest.js で files.json も作り直す(ワークフローがやる)。
 import csv
 import datetime
@@ -36,7 +36,7 @@ LAST_DAY = (NOW + datetime.timedelta(days=1)).month != NOW.month
 FLUSH_NOW = os.environ.get("SPLIT_FLUSH") == "1" and LAST_DAY and NOW.hour >= 2
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-data = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "..", "monoqlo-data")
+data = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "..", "ranking")
 event = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("EVENT_DATA", "")
 
 

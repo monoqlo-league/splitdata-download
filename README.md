@@ -1,6 +1,6 @@
 # 分割CSVのダウンロード
 
-MONOQLO PTランキングの対局記録(monoqlo-data の `YYYYMM.csv`)を10対局ずつに分けたCSVと、チーム戦の対局記録(event-data の `-gamesN.csv`)を開催日ごとに分けたCSV、それを一覧からダウンロードするページを置くリポジトリ。
+MONOQLO PTランキングの対局記録(ranking の `YYYYMM.csv`)を10対局ずつに分けたCSVと、チーム戦の対局記録(event-data の `-gamesN.csv`)を開催日ごとに分けたCSV、それを一覧からダウンロードするページを置くリポジトリ。
 牌譜の成績を書き出す拡張機能の「対局一覧のCSVを読み込む」で、少しずつ・手分けして取得するために使う。
 
 ページ: https://monoqlo-league.github.io/splitdata-download/
@@ -37,12 +37,12 @@ MONOQLO PTランキングの対局記録(monoqlo-data の `YYYYMM.csv`)を10対�
 | `downloads/majsoul-paifu-list-manual.pdf` | ページの「使い方マニュアル(PDF)」で開くマニュアル |
 
 202511〜202608 は手作業で分割した(10か月、2,618対局、266ファイル)。
-202509・202510 は集計CSV(`-summary.csv`)が monoqlo-data にあるので入れていない。202609 は対象外。
+202509・202510 は集計CSV(`-summary.csv`)が ranking にあるので入れていない。202609 は対象外。
 202610 からは、次の「自動の分割」で足していく。
 
 ## 自動の分割
 
-monoqlo-data に対局記録(`YYYYMM.csv`)がアップロードされると、数分以内に分割CSVが足され、ページに出る。
+ranking に対局記録(`YYYYMM.csv`)がアップロードされると、数分以内に分割CSVが足され、ページに出る。
 
 - まだどの分割CSVにも入っていない対局(牌譜リンクで見る)だけを、開始時間の古い順に10対局ずつ切り出し、続きの連番で足す。
 - すでにある分割CSVは書き換えない。同じ対局記録を何度アップロードしても、同じ対局が重なって入ることはない。
@@ -52,16 +52,16 @@ monoqlo-data に対局記録(`YYYYMM.csv`)がアップロードされると、�
 - 非表示状態が `no` でない対局は入れない。
 - 対象は 202610 以降の月。変えるときは `tools/split-new.py` の `FROM_MONTH` を書き換える。
 - チーム戦の対局は入れない。event-data の対局記録(`*-gamesN.csv`)にある対局は飛ばす。
-- 月のCSVから、すでに分割した対局が10対局以上なくなっていたら、その月は分割しない。チーム戦の対局記録や別の月のCSVを誤って上げたときの備え。正しいCSVで上書きされれば、次の分割から元どおり動く。知らせは monoqlo-data 側の点検が Discord に送る。
+- 月のCSVから、すでに分割した対局が10対局以上なくなっていたら、その月は分割しない。チーム戦の対局記録や別の月のCSVを誤って上げたときの備え。正しいCSVで上書きされれば、次の分割から元どおり動く。知らせは ranking 側の点検が Discord に送る。
 
-アップロード直後に動くのは、monoqlo-data の Secret `SPLIT_DISPATCH_TOKEN` が設定されているとき(設定は monoqlo-data の README)。
+アップロード直後に動くのは、ranking の Secret `SPLIT_DISPATCH_TOKEN` が設定されているとき(設定は ranking の README)。
 無いときや届かなかったときも、毎日4時ごろ(日本時間)に自分で確かめて分割する。今すぐ動かすときは「Actions」タブ →「分割CSVを足す」→「Run workflow」。
 
 月が終わる前に端数を出したいときは、手で `YYYYMM/YYYYMM-連番.csv` を足し(形式は既存のファイルと同じ)、下の「CSVを足したり入れ替えたりしたとき」のとおり `files.json` も作り直す。
 入れた対局は二度と自動では出ないので、あとから同じ月の対局が増えても重ならない。
 
 誤って分割CSVができてしまったときは、そのファイルを消し、後ろのファイルの番号を詰めて、`files.json` を作り直す。
-番号は、月のCSVを開始時間の古い順に10対局ずつ数えた位置と一致させる(monoqlo-data の点検の知らせに出る番号と同じ)。
+番号は、月のCSVを開始時間の古い順に10対局ずつ数えた位置と一致させる(ranking の点検の知らせに出る番号と同じ)。
 消したファイル・付け替えたファイルの取得記録はスプレッドシートに残る。付け替えた番号の記録は、新しいファイルの取得として数えられるので、必要ならスプレッドシートで直す。
 (2026-10-16: チーム戦の対局記録が `202610.csv` として上がり、202610-33〜41 にチーム戦の対局が入った。消して、42→33、43→34 に付け替えた)
 
@@ -138,9 +138,9 @@ node tools/build-manifest.js
 
 ページ: https://monoqlo-league.github.io/splitdata-download/upload.html (一覧のページからはリンクしていない)
 
-雀魂から書き出した対局記録(牌譜履歴)と、拡張機能が出力した詳細成績(`-summary.csv`)を、個人戦(monoqlo-data)・チーム戦(event-data)どちらにも上げられる。チーム戦の大会マスター(`-master.csv`)とスケジュール(`-schedule.csv`)も上げられる。ファイルは「ファイルを選ぶ」でも、画面への放り込みでも入れられ、何個でもまとめて入れてよい。
+雀魂から書き出した対局記録(牌譜履歴)と、拡張機能が出力した詳細成績(`-summary.csv`)を、個人戦(ranking)・チーム戦(event-data)どちらにも上げられる。チーム戦の大会マスター(`-master.csv`)とスケジュール(`-schedule.csv`)も上げられる。ファイルは「ファイルを選ぶ」でも、画面への放り込みでも入れられ、何個でもまとめて入れてよい。
 
-- 最初に「GitHubでログイン」を押す。GitHub のログインと許可の画面から戻ると使える。上げられるのは monoqlo-data と event-data に書き込める GitHub アカウントだけで、コミットはログインした人の名前で残る。ログインは8時間ほどで切れる(切れたらもう一度押す)。トークンやパスワードの入力は無い。
+- 最初に「GitHubでログイン」を押す。GitHub のログインと許可の画面から戻ると使える。上げられるのは ranking と event-data に書き込める GitHub アカウントだけで、コミットはログインした人の名前で残る。ログインは8時間ほどで切れる(切れたらもう一度押す)。トークンやパスワードの入力は無い。
 - ログインしたら、**「2. 個人戦かチーム戦か」を選ぶ**(最初はどちらも選ばれていない。選ぶまでファイルは入れられない)。大会マスター・スケジュールは、チーム戦を選んでから入れる(大会が置き場に無くても入れられる)。チーム戦は大会も選ぶ(いちばん新しい大会が初め)。途中で替えると、入れていたファイルは取り消す。
 - **対局記録**は、雀魂が書き出したファイルを名前を変えずに入れてよい。
   - 個人戦: 対局の月(開始時間のいちばん多い月)の `YYYYMM.csv` として、中身は変えずに上げる。月は画面で替えられる。
@@ -154,7 +154,7 @@ node tools/build-manifest.js
       - 一度置き換えて上げた対局は、上げ直すときに同じ人を自動で使う(選び直さなくてよい)。
       - 詳細成績(summary)の CPU の行は、CPU の打ち筋なのでその人には数えない(これまでどおり)。
   - 置いてある版にあった対局が無くなるときは、止めて知らせる(「それでも上げる」に印を付けたときだけ上げる)。
-  - **取り違えの守り**: 選んだ種類と逆の置き場にある対局(個人戦を選んだのに event-data の対局、チーム戦を選んだのに monoqlo-data の対局や別の大会の対局)が入っていたら上げない(印も付けられない)。
+  - **取り違えの守り**: 選んだ種類と逆の置き場にある対局(個人戦を選んだのに event-data の対局、チーム戦を選んだのに ranking の対局や別の大会の対局)が入っていたら上げない(印も付けられない)。
 - **詳細成績**は、ゲームIDで、選んだ種類の対局記録と照らし、その対局が入っている月・リーグの `summary/…-summary.csv` に合体する(ファイル名は見ない)。分割したサマリーを何個入れてもよい。
   - すでにある対局は重ねない。中身が違う同じ対局は、置いてある方を残して知らせる。どの対局記録にも無い対局は使わない(先に対局記録を上げると入る)。
   - 置いてある行の並びはそのままにして、足す対局を後ろに足す。BOM 付き・改行 CRLF。
@@ -169,7 +169,7 @@ node tools/build-manifest.js
 
 ### 「GitHubでログイン」の設定(1回だけ)
 
-ログインには GitHub App を1つ使う。書き込めるのは、その App を入れたリポジトリ(monoqlo-data・event-data)だけで、しかもログインした人に書き込み権限があるときだけ。
+ログインには GitHub App を1つ使う。書き込めるのは、その App を入れたリポジトリ(ranking・event-data)だけで、しかもログインした人に書き込み権限があるときだけ。
 
 1. **GitHub App を作る。** GitHub の monoqlo-league の Organization の「Settings」→ 左下「Developer settings」→「GitHub Apps」→「New GitHub App」。
    - GitHub App name: 何でもよい(例: `monoqlo-upload`)
@@ -181,7 +181,7 @@ node tools/build-manifest.js
    - Where can this GitHub App be installed: **Only on this account**。
    - 「Create GitHub App」を押す。
 2. できた App のページで、**Client ID** を控える。「Generate a new client secret」を押して出た **Client secret** も控える(1回しか出ない)。
-3. 左の「Install App」→ monoqlo-league の「Install」→「Only select repositories」で **monoqlo-data** と **event-data** を選んで入れる。
+3. 左の「Install App」→ monoqlo-league の「Install」→「Only select repositories」で **ranking** と **event-data** を選んで入れる。
 4. https://script.google.com で「新しいプロジェクト」を作り、`gas/Login.gs` の中身を貼って保存する。「プロジェクトの設定」→「スクリプト プロパティ」に `CLIENT_ID`(2. の Client ID)と `CLIENT_SECRET`(2. の Client secret)を足す。
 5. 「デプロイ」→「新しいデプロイ」→「ウェブアプリ」。実行するユーザーは**自分**、アクセスできるユーザーは**全員**で公開する。
 6. このリポジトリの `config.js` の `githubClientId` に 2. の Client ID、`loginEndpoint` に 5. の URL を貼ってコミットする。

@@ -1,6 +1,6 @@
-# 対局記録のCSV(monoqlo-data の YYYYMM.csv)から、まだ入っていない対局を10対局ずつの分割CSVにして足す。
+# 対局記録のCSV(ranking の YYYYMM.csv)から、まだ入っていない対局を10対局ずつの分割CSVにして足す。
 # チーム戦(event-data)は、スケジュールと付き合わせて、対局がそろった開催日の分を1ファイルにして足す。
-# - monoqlo-data・event-data にCSVがアップロードされると、そちらのワークフローがこれを呼ぶ(repository_dispatch)。
+# - ranking・event-data にCSVがアップロードされると、そちらのワークフローがこれを呼ぶ(repository_dispatch)。
 # - 呼び出しが届かなかったときのために、1日1回も自分で確かめる。
 # - 「Actions」タブから手動でも実行できる。
 # 分割のきまりは tools/split-new.py の冒頭を参照。
@@ -29,7 +29,7 @@ jobs:
       - name: 対局記録を取ってくる
         uses: actions/checkout@v4
         with:
-          repository: monoqlo-league/monoqlo-data
+          repository: monoqlo-league/ranking
           path: _data
       - name: チーム戦の対局記録を取ってくる(チーム戦の対局を分割に入れないため)
         uses: actions/checkout@v4

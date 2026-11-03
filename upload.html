@@ -118,13 +118,13 @@ footer p{margin:0}
     <button class="btn sub" id="logout" type="button" hidden>ログアウト</button>
   </div>
   <p class="status" id="auth-status" role="status"></p>
-  <p class="note">GitHub のログイン画面に移り、許可すると戻ってくる。上げられるのは、monoqlo-data と event-data に書き込める GitHub アカウントだけ。ログインは8時間ほどで切れるので、そのときはもう一度押す。コミットは、ログインした人の名前で残る。</p>
+  <p class="note">GitHub のログイン画面に移り、許可すると戻ってくる。上げられるのは、ranking と event-data に書き込める GitHub アカウントだけ。ログインは8時間ほどで切れるので、そのときはもう一度押す。コミットは、ログインした人の名前で残る。</p>
 </section>
 
 <section class="panel" id="kind-panel">
   <h2>2. 個人戦かチーム戦か</h2>
   <div class="row" role="radiogroup" aria-label="個人戦かチーム戦か">
-    <label class="kind"><input type="radio" name="kind" value="personal" disabled> 個人戦 <span class="note">(monoqlo-data)</span></label>
+    <label class="kind"><input type="radio" name="kind" value="personal" disabled> 個人戦 <span class="note">(ranking)</span></label>
     <label class="kind"><input type="radio" name="kind" value="team" disabled> チーム戦 <span class="note">(event-data)</span></label>
   </div>
   <div class="row" id="event-row" hidden>
@@ -169,10 +169,10 @@ footer p{margin:0}
 (() => {
 "use strict";
 const OWNER = "monoqlo-league";
-const REPO = { personal: "monoqlo-data", team: "event-data" };
+const REPO = { personal: "ranking", team: "event-data" };
 const TOKEN_KEY = "monoqlo-upload-login";     // {token, expires, login}
 const STATE_KEY = "monoqlo-upload-state";
-const RANKING = { "monoqlo-data": "https://monoqlo-league.github.io/ranking/", "event-data": "https://monoqlo-league.github.io/event-ranking/" };   // 上げたあとに開くランキング
+const RANKING = { "ranking": "https://monoqlo-league.github.io/ranking/", "event-data": "https://monoqlo-league.github.io/event-ranking/" };   // 上げたあとに開くランキング
 const CFG = window.SPLITDATA_CONFIG || {};
 const CLIENT_ID = (CFG.githubClientId || "").trim();
 const LOGIN_ENDPOINT = (CFG.loginEndpoint || "").trim();
@@ -970,7 +970,7 @@ async function useToken(t, login) {
     return me;
   } catch (e) {
     saveLogin(null);
-    showLoggedOut(e.status === 401 ? "ログインが切れた。もう一度ログインする。" : e.status === 404 ? "monoqlo-league のリポジトリが見えない。GitHub App が monoqlo-data・event-data に入っているか確かめる。" : "確かめられなかった: " + e.message, "err");
+    showLoggedOut(e.status === 401 ? "ログインが切れた。もう一度ログインする。" : e.status === 404 ? "monoqlo-league のリポジトリが見えない。GitHub App が ranking・event-data に入っているか確かめる。" : "確かめられなかった: " + e.message, "err");
   }
 }
 $("login").addEventListener("click", () => {
