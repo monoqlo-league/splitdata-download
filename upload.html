@@ -58,6 +58,13 @@ details.help ol{margin:8px 0 0;padding-left:1.4em;font-size:13px;display:grid;ga
 .drop b{font-size:16px}
 body.dragging .drop:not(.off){border-color:var(--accent)}
 
+/* 詳細成績がまだ上がっていない分割CSV */
+.miss{gap:6px}
+.miss h2{font-size:14px}
+.miss ul{margin:0;padding-left:1.2em;display:grid;gap:4px;font-size:14px}
+.miss b{font-family:"IBM Plex Mono",monospace;font-weight:700}
+.miss .part{color:var(--warn)}
+
 .card{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px;display:grid;gap:8px}
 .card{position:relative;padding-right:44px}
 .card .close{all:unset;box-sizing:border-box;position:absolute;top:8px;right:8px;width:28px;height:28px;display:grid;place-items:center;border-radius:6px;color:var(--muted);font-size:15px;cursor:pointer}
@@ -131,6 +138,11 @@ footer p{margin:0}
   <span class="note">何個でもまとめて入れられる。対局記録(牌譜履歴)・詳細成績(-summary.csv)・大会マスター・スケジュールを混ぜてもよい。大会マスターとスケジュールは、「2.」でチーム戦を選んでから入れる。</span>
   <button class="btn sub" id="pick" type="button">ファイルを選ぶ</button>
   <input type="file" id="file" accept=".csv,text/csv" multiple hidden>
+</section>
+
+<section class="panel miss" id="missing" hidden aria-live="polite">
+  <h2>詳細成績がまだ上がっていない分割CSV</h2>
+  <div id="missing-body"></div>
 </section>
 
 <p class="status" id="load-status" role="status"></p>
@@ -774,6 +786,7 @@ async function dismiss(p) {
 
 /* ---------- 表示 ---------- */
 function render() {
+  renderMissing();
   const host = $("plans"); host.textContent = "";
   host.style.display = "grid"; host.style.gap = "12px";
   const order = { master: -2, schedule: -1, record: 0, summary: 1, note: 2 };
@@ -989,8 +1002,91 @@ async function finishLogin() {
   return true;
 }
 
+/* ---------- 詳細成績がまだ上がっていない分割CSV(ダウンロードページのファイルの番号) ----------
+   分割CSV(このページと同じ場所の files.json と各CSV)の対局が、置いてある詳細成績(summary)にあるかを見る。
+   放り込んだ詳細成績(これから上げる分)も、あるものとして数える。 */
+let MANIFEST = null, missSeq = 0, missKey = "";
+const splitCache = new Map();
+function manifest() {
+  if (!MANIFEST) MANIFEST = fetch("files.json", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  return MANIFEST;
+}
+function splitLinks(path) {
+  if (!splitCache.has(path)) splitCache.set(path, fetch(path).then((r) => (r.ok ? r.text() : "")).then((t) => recGames(parseCSV(t)).map((g) => g.link)).catch(() => []));
+  return splitCache.get(path);
+}
+async function summaryIds(repo, path) {
+  const f = await readFile(repo, path);
+  return new Set(f ? f.rows.slice(1).map((r) => (r[0] || "").trim()).filter(Boolean) : []);
+}
+/* 連番を「35〜43」のようにまとめる */
+function numRanges(list) {
+  const out = []; let i = 0;
+  while (i < list.length) {
+    let j = i;
+    while (j + 1 < list.length && list[j + 1].n === list[j].n + 1 && !list[j + 1].part && !list[j].part) j++;
+    out.push(j > i + 1 ? `${list[i].label}〜${list[j].label}` : j === i + 1 ? `${list[i].label}、${list[j].label}` : list[i].label + (list[i].part ? `(残り${list[i].part})` : ""));
+    i = j + 1;
+  }
+  return out;
+}
+async function renderMissing() {
+  const box = $("missing"), body = $("missing-body"), seq = ++missSeq;
+  if (!TOKEN || !KIND || (KIND === "team" && !EVENT)) { box.hidden = true; return; }
+  try {
+    await store.ready;
+    const man = await manifest();
+    if (seq !== missSeq) return;
+    if (!man) { box.hidden = true; return; }
+    const key = KIND + ":" + (EVENT ? EVENT.id : "");
+    if (key !== missKey || !body.childElementCount) { missKey = key; box.hidden = false; body.textContent = "確かめている…"; }
+    const pending = new Set(pendingSummaries.flatMap((s) => s.rows.slice(1).map((r) => (r[0] || "").trim())));
+    const lines = [];
+    if (KIND === "personal") {
+      for (const m of man.months || []) {
+        const ym = m.month, sum = await summaryIds(REPO.personal, `summary/${ym}-summary.csv`);
+        const rec = (await recordLinks(REPO.personal, monthPath(ym))) || [];
+        if (!rec.some((g) => !g.hidden && !sum.has(g.link) && !pending.has(g.link))) continue;   // 月の対局がそろっていれば、分割CSVは読まない
+        const lack = [];
+        await pool(m.files, async (f) => {
+          const ls = await splitLinks(f.path), n = ls.filter((l) => !sum.has(l) && !pending.has(l)).length;
+          const mm = /-(\d+)\.csv$/.exec(f.name);
+          if (n && mm) lack.push({ n: Number(mm[1]), label: mm[1], part: n < ls.length ? n : 0 });
+        });
+        lack.sort((a, b) => a.n - b.n);
+        if (lack.length) lines.push([`${ym.slice(0, 4)}年${Number(ym.slice(4))}月`, numRanges(lack).join("、"), `${ym}-番号.csv`]);
+      }
+    } else {
+      const ev = (man.events || []).find((x) => x.key === EVENT.id);
+      const byK = new Map();
+      for (const f of (ev && ev.files) || []) { const mm = /-games(\d+)-/.exec(f.name); if (mm) { const k = Number(mm[1]); if (!byK.has(k)) byK.set(k, []); byK.get(k).push(f); } }
+      for (const [k, fs] of [...byK].sort((a, b) => a[0] - b[0])) {
+        const sum = await summaryIds(REPO.team, `summary/${EVENT.id}-games${k}-summary.csv`);
+        const lack = [];
+        await pool(fs, async (f) => {
+          const ls = await splitLinks(f.path), n = ls.filter((l) => !sum.has(l) && !pending.has(l)).length;
+          if (n) lack.push({ day: f.day || "", label: (f.day || f.name).slice(5).replace("-", "/"), part: n < ls.length ? n : 0 });
+        });
+        lack.sort((a, b) => a.day.localeCompare(b.day));
+        if (lack.length) lines.push([fs[0].league || EVENT.leagues[k - 1] || `${k}次リーグ`, lack.map((x) => x.label + (x.part ? `(残り${x.part})` : "")).join("、"), `${EVENT.id}-games${k}-日付.csv`]);
+      }
+    }
+    if (seq !== missSeq) return;
+    body.textContent = "";
+    box.hidden = false;
+    if (!lines.length) { body.append(el("p", "note", "分割CSVの詳細成績は、すべて上がっている(放り込んだ分を含む)。")); return; }
+    const ul = el("ul");
+    for (const [head, list] of lines) { const li = el("li"); li.append(el("span", "", head + ":"), " ", el("b", "", list)); ul.append(li); }
+    body.append(ul, el("p", "note", KIND === "personal" ? "番号は分割CSV(YYYYMM-番号.csv)の番号。「残り」は、そのファイルの対局のうち詳細成績が無い数。放り込んだ詳細成績も、あるものとして数える。"
+      : "日付は分割CSV(大会-gamesN-日付.csv)の開催日。「残り」は、そのファイルの対局のうち詳細成績が無い数。放り込んだ詳細成績も、あるものとして数える。"));
+  } catch (e) {
+    if (seq === missSeq) { box.hidden = false; body.textContent = "確かめられなかった: " + e.message; }
+  }
+}
+
 /* ---------- 個人戦かチーム戦か ---------- */
 function refreshDrop() {
+  renderMissing();
   const ok = !!TOKEN && (KIND === "personal" || KIND === "team");   // チーム戦は、大会が無くても大会マスター・スケジュールなら入れられる(対局記録・詳細成績は takeFiles で確かめる)
   $("drop").classList.toggle("off", !ok);
   $("kind-note").textContent = !TOKEN ? "ログインすると選べる。選んだ種類のファイルとして上げる(中身で個人戦かチーム戦かを決めることはしない)。"
