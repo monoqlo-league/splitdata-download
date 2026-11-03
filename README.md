@@ -1,6 +1,6 @@
 # 分割CSVのダウンロード
 
-MONOQLO PTランキングの対局記録(ranking の `YYYYMM.csv`)を10対局ずつに分けたCSVと、チーム戦の対局記録(event-data の `-gamesN.csv`)を開催日ごとに分けたCSV、それを一覧からダウンロードするページを置くリポジトリ。
+MONOQLO PTランキングの対局記録(ranking の `data/YYYYMM.csv`)を10対局ずつに分けたCSVと、チーム戦の対局記録(event-data の `-gamesN.csv`)を開催日ごとに分けたCSV、それを一覧からダウンロードするページを置くリポジトリ。
 牌譜の成績を書き出す拡張機能の「対局一覧のCSVを読み込む」で、少しずつ・手分けして取得するために使う。
 
 ページ: https://monoqlo-league.github.io/splitdata-download/
@@ -42,7 +42,7 @@ MONOQLO PTランキングの対局記録(ranking の `YYYYMM.csv`)を10対局ず
 
 ## 自動の分割
 
-ranking に対局記録(`YYYYMM.csv`)がアップロードされると、数分以内に分割CSVが足され、ページに出る。
+ranking の data フォルダに対局記録(`YYYYMM.csv`)がアップロードされると、数分以内に分割CSVが足され、ページに出る。
 
 - まだどの分割CSVにも入っていない対局(牌譜リンクで見る)だけを、開始時間の古い順に10対局ずつ切り出し、続きの連番で足す。
 - すでにある分割CSVは書き換えない。同じ対局記録を何度アップロードしても、同じ対局が重なって入ることはない。

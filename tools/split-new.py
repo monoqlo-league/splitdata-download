@@ -15,7 +15,7 @@
 #   個人戦の月のCSVは、毎回その月の全対局を入れて上書きするので、ふつうは対局が減らない。
 #   チーム戦の対局記録や別の月のCSVを誤って上げたときに、このきまりで止まる(ranking 側の点検が Discord に知らせる)。
 #
-# 使い方: リポジトリの直下で  python3 tools/split-new.py <ranking のフォルダ> [<event-data のフォルダ>]
+# 使い方: リポジトリの直下で  python3 tools/split-new.py <ranking の data フォルダ> [<event-data のフォルダ>]
 # 終わったら node tools/build-manifest.js で files.json も作り直す(ワークフローがやる)。
 import csv
 import datetime
@@ -36,7 +36,7 @@ LAST_DAY = (NOW + datetime.timedelta(days=1)).month != NOW.month
 FLUSH_NOW = os.environ.get("SPLIT_FLUSH") == "1" and LAST_DAY and NOW.hour >= 2
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-data = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "..", "ranking")
+data = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "..", "ranking", "data")
 event = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("EVENT_DATA", "")
 
 

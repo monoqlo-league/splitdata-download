@@ -270,9 +270,9 @@ function recGames(rows) {
   })).filter((g) => g.link);
 }
 async function loadStore() {
-  const [pRoot, pSum, eRoot, eSum] = await Promise.all([listDir(REPO.personal, ""), listDir(REPO.personal, "summary"), listDir(REPO.team, ""), listDir(REPO.team, "summary")]);
+  const [pRoot, pSum, eRoot, eSum] = await Promise.all([listDir(REPO.personal, "data"), listDir(REPO.personal, "summary"), listDir(REPO.team, ""), listDir(REPO.team, "summary")]);
   shas.clear();
-  for (const [repo, dir, list] of [[REPO.personal, "", pRoot], [REPO.personal, "summary/", pSum], [REPO.team, "", eRoot], [REPO.team, "summary/", eSum]])
+  for (const [repo, dir, list] of [[REPO.personal, "data/", pRoot], [REPO.personal, "summary/", pSum], [REPO.team, "", eRoot], [REPO.team, "summary/", eSum]])
     for (const f of list) if (f.type === "file") shas.set(repo + ":" + dir + f.name, f.sha);
   store.months = pRoot.map((f) => /^(\d{6})\.csv$/.exec(f.name)).filter(Boolean).map((m) => m[1]).sort();
   store.summaries = new Set([...pSum.map((f) => REPO.personal + ":summary/" + f.name), ...eSum.map((f) => REPO.team + ":summary/" + f.name)]);
@@ -315,7 +315,7 @@ async function loadStore() {
     }
   }
 }
-const monthPath = (ym) => ym + ".csv";
+const monthPath = (ym) => "data/" + ym + ".csv";   // 個人戦の対局記録は ranking の data フォルダ
 const gamesPath = (eid, k) => `${eid}-games${k}.csv`;
 /* 置いてある対局記録をぜんぶ並べて読んでおく(読んだものは覚えておくので2回目からは速い) */
 function warmRecords() {
